@@ -14,6 +14,11 @@ body {
     display: grid;
     grid-template-columns: 1fr;
     grid-template-rows: 1fr;
+    background: $c-dark;
+}
+#root{
+    display: flex;
+    justify-content: center;
 }
 * {
     box-sizing: border-box;
@@ -29,8 +34,10 @@ body {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
     height: 100%;
+    width: 100%;
     padding: 40px 60px 80px;
     background: $c-dark;
+    max-width: 1300px;
     &__topbar{
         display: grid;
         grid-template-columns: 1fr auto;
@@ -68,11 +75,17 @@ body {
             align-items: center;
             grid-gap: 20px;
             grid-template: 1fr 1fr / 1fr 1fr;
+            &__note{
+                height: 80px;
+                width: 150px;
+                color: $c-light-gray;
+                font-family: $f-roboto;
+            }
             &__button{
                 height: 80px;
-                width: 120px;
+                width: 140px;
                 padding: 5px 5px;
-                border: 6px solid rgba(0, 0, 0, 0.69);
+                border: 2px solid rgba(0, 0, 0, 0.69);
                 border-radius: 10px;
                 background-color: $c-green;
                 background-size: 100%;
@@ -84,11 +97,11 @@ body {
                 font-family: $f-martian;
                 &:hover{
                     color: rgba($c-yellow, 1);
-                    border-width: 4px;
+                    border-width: 0;
                 }
                 &:active{
                     transition-duration: 0s;
-                    border-width: 7px;
+                    border-width: 3px;
                 }
             }
         }
@@ -105,9 +118,9 @@ body {
     &-fields{
         background: $c-light-gray;
         padding: 5px;
-        font-size: 1rem;
+        font-size: 0.8rem;
         border-radius: 1px;
-        box-shadow: 0 0 0 3px rgba(white,0.2);
+        //box-shadow: 0 0 0 3px rgba(white,0.2);
         border: 2px solid rgba(black,0.5);
         font-family: $f-martian;
         &:focus-visible{
