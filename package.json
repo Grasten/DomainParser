@@ -10,8 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "linkify-it": "^5.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "tlds": "^1.258.0",
     "tldts": "^7.0.6"
   },
   "devDependencies": {

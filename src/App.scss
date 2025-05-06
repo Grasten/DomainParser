@@ -52,6 +52,10 @@ body {
             color: $c-red;
             font-family: $f-bebas;
             font-weight: normal;
+            &__version{
+                color: $c-green;
+                font-size: 0.9rem;
+            }
         }
         &__inputs{
             grid-area: field;
@@ -89,7 +93,7 @@ body {
                 border-radius: 10px;
                 background-color: $c-green;
                 background-size: 100%;
-                transition: all ease-in-out 0.1s;
+                transition: all linear 0.05s;
                 color: rgba($c-yellow, 0.9);
                 text-shadow: 0 0 2px black;
                 font-weight: bold;

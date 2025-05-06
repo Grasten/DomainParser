@@ -1,9 +1,104 @@
 import { parse } from 'tldts';
+import linkifyit from 'linkify-it';
+const linkify = linkifyit();
+import tlds from 'tlds';
+linkify.tlds(tlds)
 
-let filteredDomainsArray = [];
+let filteredLinksArray = [];
 const regBracketDotText = /(\s?\W\s?)dot(\s?\W\s?)/ig;
 const regBracketDot = /(\s?\W\s?)\.(\s?\W\s?)/ig;
 const regDomains = /(?<=^|[^a-z0-9])((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[^a-z0-9]|$)/gi;
+const regHttps = /hxxps\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
+const regHttp = /hxxp\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
+
+
+// --- BASE FUNCTIONS ---
+
+// Returns input text with basic parsing (brackets, protocols)
+function getInputText(){
+  // Get domains from input
+  let worklist = document.getElementById("parserInput").value;
+
+  // Remove brackets, fix protocols
+  worklist = worklist.replace(regBracketDot, ".");
+  worklist = worklist.replace(regBracketDotText, ".");
+  worklist = worklist.replace(regHttps, "https://");
+  worklist = worklist.replace(regHttp, "http://");
+  return worklist;
+}
+
+// Returns an array of verified domains from input
+function getDomains(type) {
+  // Get text from input
+  let worklist = getInputText();
+
+  // Search for links in text
+  worklist = worklist.match(regDomains) || [];
+
+  // Set them in array with unique values
+  worklist = [...new Set(worklist)];
+
+  // Validate domains and remove invalid
+  let tempArray = [];
+
+  worklist.forEach((domain) => {
+    let el = parse(domain)
+    if (el.isIcann){
+      tempArray.push(el);
+    }
+  });
+  worklist = [...new Set(tempArray)];
+
+  // Reset filtered array/output
+  filteredLinksArray = [];
+
+  // Set domains into filtered array
+  tempArray = [];
+  worklist.forEach((domain) => {
+    tempArray.push(domain[type]);
+  });
+  filteredLinksArray= [...new Set(tempArray)];
+
+  // Get a text list from filtered array
+  worklist = createListFromArray(filteredLinksArray);
+
+  return({worklist, filteredLinksArray});
+}
+
+// Returns an array of verified links from input
+function getLinks() {
+  // Get text from input
+  let worklist = getInputText();
+
+  // Search for links in text
+  worklist = linkify.match(worklist) || [];
+
+  // Set them in array with unique values
+  worklist = [...new Set(worklist)];
+
+  // Validate domains and remove invalid
+  let tempArray = [];
+  worklist.forEach((domain) => {
+    let el = parse(domain.text)
+    if (el.isIcann){
+      tempArray.push(domain.text);
+    }
+  });
+  worklist = [...new Set(tempArray)];
+
+  // Reset filtered array/output and set domains
+  filteredLinksArray = [];
+  tempArray = [];
+  worklist.forEach((domain) => {
+    tempArray.push(domain);
+  });
+  filteredLinksArray= [...new Set(tempArray)];
+
+  // Get a text list from filtered array
+  worklist = createListFromArray(filteredLinksArray);
+
+  return({worklist, filteredLinksArray});
+}
 
 // Converts an array of domains to a text list
 function createListFromArray(domainArray){
@@ -16,71 +111,44 @@ function createListFromArray(domainArray){
   return domainList;
 }
 
-// Returns an array of verified domains from input
-function getUnfilteredDomains() {
-  // Get domains from input
-  let worklist = document.getElementById("parserInput").value;
 
-  // Remove brackets
-  worklist = worklist.replace(regBracketDot, ".");
-  worklist = worklist.replace(regBracketDotText, ".");
 
-  // Search for links in text
-  worklist = worklist.match(regDomains) || [];
-
-  // Set them in array with unique values
-  worklist = [...new Set(worklist)];
-
-  // Validate domains and remove invalid
-  let tempArray = [];
-  worklist.forEach((domain) => {
-    let el = parse(domain)
-    if (el.isIcann){
-      tempArray.push(el);
-    }
-  });
-  worklist = [...new Set(tempArray)];
-
-  return(worklist);
-}
+// --- EXPORT FUNCTIONS ---
 
 // Accepts either "domain" or "hostname" as a param, sets filtered array and values to frontend
-export function parseDomains(param){
-  let worklist = getUnfilteredDomains();
-
-  // Reset filtered array
-  filteredDomainsArray = [];
-
-  // Set domains into filtered array
-  let tempArray = [];
-  worklist.forEach((domain) => {
-    tempArray.push(domain[param]);
-  });
-  filteredDomainsArray= [...new Set(tempArray)];
-
-  // Get a text list from filtered array
-  worklist = createListFromArray(filteredDomainsArray);
+export function parseDomains(type){
+  let links;
+  switch(type){
+    case "hostname": links = getDomains(type);
+    break;
+    case "domain": links = getDomains(type);
+    break;
+    case "url": links = getLinks();
+    break;
+  }
 
   // Set values to front-end
-  document.getElementById("parserOutput").value = worklist;
-  document.getElementById("parserOutputCounter").innerText = `Number of links: ${filteredDomainsArray.length}`;
+  document.getElementById("parserOutput").value = links.worklist;
+  document.getElementById("parserOutputCounter").innerText = `Number of links: ${links.filteredLinksArray.length}`;
 }
 
 // Opens parsed domains, can parse them first if needed
 export function openParsedDomains(){
-  console.log(document.getElementById("parserInput").value);
-  // Check if there are parsed domains
+
+  // Check if there are parsed links
   if (document.getElementById("parserOutput").value) {
-    filteredDomainsArray.forEach((el) => {
-      window.open(`https://${el}`);
+    filteredLinksArray.forEach((el) => {
+      (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
+      console.log(el)
     })
   } else {
-    // Parse domains and open
+
+    // If no links parsed, parse hostnames and open
     console.log("test")
     parseDomains("hostname");
-    console.log(filteredDomainsArray)
-    filteredDomainsArray.forEach((el) => {
-      window.open(`https://${el}`);
+    console.log(filteredLinksArray)
+    filteredLinksArray.forEach((el) => {
+      (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
     })
   }
 }

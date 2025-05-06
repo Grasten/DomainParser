@@ -13,16 +13,27 @@ function App() {
 
       <div className="parser">
         <div className="parser__topbar">
-          <h1 className="parser__topbar__title font-bebas">Glorious domain parser</h1>
+          <h1 className="parser__topbar__title font-bebas">
+            Domain parser
+            <span className="parser__topbar__title__version">ver: 0.1</span>
+          </h1>
           <div className="parser__topbar__inputs">
             <label htmlFor="parserInput" className="parser__topbar__inputs__label"></label>
-            <textarea className="parser__topbar__inputs__input parser-fields" id="parserInput"></textarea>
+            <textarea className="parser__topbar__inputs__input parser-fields" id="parserInput"
+                      defaultValue="hXXps://domain [.] com/
+Domain TLD Source Category Suspension Date quaes[dot]store store Google Safe Browsing Social
+Engineering 2025-04-06 12:57:48 soulvibe[dot]store store Netcraft Scam 2025-04-06 14:00:42
+https://bradford.sttzik.icu/Xf?xf9=26-90
+                      ">
+
+            </textarea>
           </div>
           <div className="parser__topbar__buttons">
             <button className="parser__topbar__buttons__button" onClick={()=> parseDomains("domain")}>Parse domains</button>
             <button className="parser__topbar__buttons__button" onClick={openParsedDomains}>Open parsed links</button>
             <button className="parser__topbar__buttons__button" onClick={()=> parseDomains("hostname")}>Parse hostnames</button>
-            <p className="parser__topbar__buttons__note">"Open parsed links" will open hostnames by default if nothing is parsed</p>
+            <button className="parser__topbar__buttons__button" onClick={()=> parseDomains("url")}>Parse URLs</button>
+            <button className="parser__topbar__buttons__button" onClick={()=> console.clear()}>clear</button>
           </div>
         </div>
         <label>
