@@ -78,7 +78,12 @@ body {
             justify-content: center;
             align-items: center;
             grid-gap: 20px;
-            grid-template: 1fr 1fr / 1fr 1fr;
+            grid-template-rows: 1fr 1fr 1fr;
+            grid-template-columns: 1fr 1fr;
+            grid-template-areas:
+            "parseDomains parseOpen"
+            "parseHostnames parseOpen"
+            "parseURLs parseOpen";
             &__note{
                 height: 80px;
                 width: 150px;
@@ -86,8 +91,8 @@ body {
                 font-family: $f-roboto;
             }
             &__button{
-                height: 80px;
-                width: 140px;
+                height: 60px;
+                width: 116px;
                 padding: 5px 5px;
                 border: 2px solid rgba(0, 0, 0, 0.69);
                 border-radius: 10px;
@@ -97,7 +102,7 @@ body {
                 color: rgba($c-yellow, 0.9);
                 text-shadow: 0 0 2px black;
                 font-weight: bold;
-                font-size: 1.2rem;
+                font-size: 1rem;
                 font-family: $f-martian;
                 &:hover{
                     color: rgba($c-yellow, 1);
@@ -106,6 +111,19 @@ body {
                 &:active{
                     transition-duration: 0s;
                     border-width: 3px;
+                }
+                &--domains{
+                    grid-area: parseDomains;
+                }
+                &--hostnames{
+                    grid-area: parseHostnames;
+                }
+                &--URLs{
+                    grid-area: parseURLs;
+                }
+                &--open{
+                    grid-area: parseOpen;
+                    height: 50%;
                 }
             }
         }
@@ -125,10 +143,10 @@ body {
         font-size: 0.8rem;
         border-radius: 1px;
         //box-shadow: 0 0 0 3px rgba(white,0.2);
-        border: 2px solid rgba(black,0.5);
+        border: 1px solid rgba(black,0.5);
         font-family: $f-martian;
         &:focus-visible{
-            box-shadow: 0 0 0 2px rgba($c-yellow,0.9);
+            box-shadow: 0 0 0 1px rgba($c-yellow,0.9);
         }
     }
 }
