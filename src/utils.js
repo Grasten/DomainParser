@@ -10,7 +10,28 @@ const regBracketDot = /(\s?\W\s?)\.(\s?\W\s?)/ig;
 const regDomains = /(?<=^|[^a-z0-9])((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[^a-z0-9]|$)/gi;
 const regHttps = /hxxps\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
 const regHttp = /hxxp\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
-
+const mailerDomains = [
+  "gmail.com",
+  "yahoo.com",
+  "hotmail.com",
+  "outlook.com",
+  "icloud.com",
+  "mail.com",
+  "aol.com",
+  "protonmail.com",
+  "zoho.com",
+  "yandex.com",
+  "gmx.com",
+  "me.com",
+  "tutanota.com",
+  "live.com",
+  "fastmail.com",
+  "hushmail.com",
+  "qq.com",
+  "naver.com",
+  "163.com",
+  "rediffmail.com",
+]
 
 // --- BASE FUNCTIONS ---
 
@@ -119,6 +140,7 @@ function createListFromArray(domainArray){
 export function parseDomains(type){
   let links = {};
   let filter = document.getElementById("filterInput").value;
+
   switch(type){
     case "hostname": links = getDomains(type);
     break;
@@ -134,28 +156,56 @@ export function parseDomains(type){
     links.worklist = createListFromArray(links.filteredLinksArray);
   }
 
+  // If ignore mailers enabled, filter the array for it and update worklist
+  if (document.getElementById("checkboxMail").checked){
+    let tempArray = [];
+    links.filteredLinksArray.forEach((domain) => {
+      let mailerDetected, el = domain;
+      mailerDomains.forEach(mailer => {
+        if (el.match(`${mailer}`)){
+          mailerDetected = true;
+        }
+      })
+      if(!mailerDetected){tempArray.push(el)}
+    });
+
+    links.filteredLinksArray = [...new Set(tempArray)];
+    links.worklist = createListFromArray(links.filteredLinksArray);
+  }
+
   // Set values to front-end
   document.getElementById("parserOutput").value = links.worklist;
   document.getElementById("parserOutputCounter").innerText = `Number of links: ${links.filteredLinksArray.length}`;
 }
 
+
 // Opens parsed domains, can parse them first if needed
 export function openParsedDomains(){
-
   // Check if there are parsed links
   if (document.getElementById("parserOutput").value) {
     filteredLinksArray.forEach((el) => {
       (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
-      console.log(el)
     })
   } else {
-
     // If no links parsed, parse hostnames and open
-    console.log("test")
     parseDomains("hostname");
-    console.log(filteredLinksArray)
     filteredLinksArray.forEach((el) => {
       (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
+    })
+  }
+}
+
+export function findTargets(){
+  // Check if there are parsed links
+  if (document.getElementById("parserOutput").value) {
+    filteredLinksArray.forEach((el) => {
+      window.open(`https://www.google.com/search?q=${el}`);
+    })
+  } else {
+    // If no links parsed, parse hostnames and open
+    parseDomains("domain");
+    filteredLinksArray.forEach((el) => {
+      window.open(`https://www.google.com/search?q=${el}`);
     })
   }
 }

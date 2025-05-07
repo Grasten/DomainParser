@@ -32,7 +32,7 @@ body {
 .parser{
     display: grid;
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto auto 1fr;
     height: 100%;
     width: 100%;
     padding: 40px 60px 80px;
@@ -46,12 +46,12 @@ body {
         grid-template-areas:
             "title title"
             "field buttons";
-        margin-bottom: 20px;
         &__title{
             grid-area: title;
             color: $c-red;
             font-family: $f-bebas;
             font-weight: normal;
+            cursor: default;
             &__version{
                 color: $c-green;
                 font-size: 0.9rem;
@@ -69,7 +69,6 @@ body {
             &__input{
                 height: 100%;
                 width: 100%;
-                margin: 3px 0;
             }
         }
         &__buttons{
@@ -79,6 +78,7 @@ body {
             grid-gap: 20px;
             grid-template-rows: 1fr;
             grid-template-columns: 1fr 1fr;
+            user-select: none;
             &__note{
                 height: 80px;
                 width: 150px;
@@ -117,32 +117,94 @@ body {
                 display: flex;
                 flex-direction: column;
                 gap: 10px;
-                &__button{
-
-                }
+                &__button{}
             }
             &__openbox{
                 display: flex;
                 flex-direction: column;
-                gap: 20px;
-                &__button{
-
-                }
-                &__filter{
+                gap: 10px;
+                &__button{}
+                /*&__options{
+                    display: flex;
+                    flex-direction: column;
                     &__title{
                         color: rgba($c-yellow, 0.9);
                         font-family: $f-roboto;
+                        font-size: 1rem;
                     }
-                    &__input{
+                    &__textinput{
                         padding: 2px 5px;
                         width: 120px;
                         background-color: $c-light-gray;
                         font-family: $f-roboto;
                     }
-                }
+                }*/
             }
         }
     }
+
+    &__options{
+        padding: 5px 0 15px;
+        display: flex;
+        gap: 30px;
+        &__mail{
+            color: rgba($c-yellow, 0.9);
+            font-family: $f-roboto;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            user-select: none;
+            cursor: pointer;
+            &__checkbox{
+                position: absolute;
+                opacity: 0;
+                cursor: pointer;
+                height: 0;
+                width: 0;
+            }
+            &__vis-checkbox{
+                height: 0.9rem;
+                width: 0.9rem;
+                border-radius: 20%;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                background-color: $c-light-gray;
+                transition: all linear 1s;
+                &>svg{
+                    height: 0.8rem;
+                    width: 0.8rem;
+                    &>polygon{
+                        fill: $c-light-gray;
+                    }
+                }
+                &--checked{
+                    &>svg>polygon{
+                        fill: $c-green;
+                    }
+                }
+            }
+        }
+
+        &__filter{
+            display: flex;
+            gap: 0.3rem;
+            &__title{
+                color: rgba($c-yellow, 0.9);
+                font-family: $f-roboto;
+                font-size: 1rem;
+                cursor: default;
+            }
+            &__input{
+                padding: 2px 5px;
+                width: 120px;
+                background-color: $c-light-gray;
+                font-family: $f-roboto;
+            }
+        }
+    }
+
     &__output{
         width: 100%;
         height: 100%;
