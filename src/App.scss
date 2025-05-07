@@ -76,14 +76,9 @@ body {
             grid-area: buttons;
             display: grid;
             justify-content: center;
-            align-items: center;
             grid-gap: 20px;
-            grid-template-rows: 1fr 1fr 1fr;
+            grid-template-rows: 1fr;
             grid-template-columns: 1fr 1fr;
-            grid-template-areas:
-            "parseDomains parseOpen"
-            "parseHostnames parseOpen"
-            "parseURLs parseOpen";
             &__note{
                 height: 80px;
                 width: 150px;
@@ -91,39 +86,59 @@ body {
                 font-family: $f-roboto;
             }
             &__button{
-                height: 60px;
-                width: 116px;
+                min-height: 60px;
+                width: 120px;
                 padding: 5px 5px;
-                border: 2px solid rgba(0, 0, 0, 0.69);
                 border-radius: 10px;
                 background-color: $c-green;
-                background-size: 100%;
+                text-shadow: 0 0 3px black;
+                font-size: 1.1rem;
+                font-family: $f-roboto;
+
                 transition: all linear 0.05s;
                 color: rgba($c-yellow, 0.9);
-                text-shadow: 0 0 2px black;
-                font-weight: bold;
-                font-size: 1rem;
-                font-family: $f-martian;
+                box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.69);
+                //border: 2px solid rgba(0, 0, 0, 0.69);
                 &:hover{
                     color: rgba($c-yellow, 1);
-                    border-width: 0;
+                    //order-width: 0;
+                    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.69);
+                    scale: 105%;
                 }
                 &:active{
                     transition-duration: 0s;
-                    border-width: 3px;
+                    //border-width: 3px;
+                    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.69);
+                    scale: 99%;
+
                 }
-                &--domains{
-                    grid-area: parseDomains;
+            }
+            &__parsebox{
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                &__button{
+
                 }
-                &--hostnames{
-                    grid-area: parseHostnames;
+            }
+            &__openbox{
+                display: flex;
+                flex-direction: column;
+                gap: 20px;
+                &__button{
+
                 }
-                &--URLs{
-                    grid-area: parseURLs;
-                }
-                &--open{
-                    grid-area: parseOpen;
-                    height: 50%;
+                &__filter{
+                    &__title{
+                        color: rgba($c-yellow, 0.9);
+                        font-family: $f-roboto;
+                    }
+                    &__input{
+                        padding: 2px 5px;
+                        width: 120px;
+                        background-color: $c-light-gray;
+                        font-family: $f-roboto;
+                    }
                 }
             }
         }

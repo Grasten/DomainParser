@@ -15,25 +15,35 @@ function App() {
         <div className="parser__topbar">
           <h1 className="parser__topbar__title font-bebas">
             Domain parser
-            <span className="parser__topbar__title__version">ver: 0.1</span>
+            <span className="parser__topbar__title__version">ver: 0.2</span>
           </h1>
           <div className="parser__topbar__inputs">
             <label htmlFor="parserInput" className="parser__topbar__inputs__label"></label>
             <textarea className="parser__topbar__inputs__input parser-fields" id="parserInput"
-                      defaultValue="hXXps://domain [.] com/"></textarea>
+                      defaultValue=""></textarea>
           </div>
           <div className="parser__topbar__buttons">
-            <button className="parser__topbar__buttons__button parser__topbar__buttons__button--domains" id="parseDomains"
-                    onClick={()=> parseDomains("domain")}>Parse domains</button>
+            <div className="parser__topbar__buttons__parsebox">
+              <button className="parser__topbar__buttons__parsebox__button parser__topbar__buttons__button" id="parseDomains"
+                      onClick={()=> parseDomains("domain")}>Parse domains</button>
 
-            <button className="parser__topbar__buttons__button parser__topbar__buttons__button--hostnames" id="parseHostnames"
-                    onClick={()=> parseDomains("hostname")}>Parse hostnames</button>
+              <button className="parser__topbar__buttons__parsebox__button parser__topbar__buttons__button" id="parseHostnames"
+                      onClick={()=> parseDomains("hostname")}>Parse hostnames</button>
 
-            <button className="parser__topbar__buttons__button parser__topbar__buttons__button--URLs" id="parseURLs"
-                    onClick={()=> parseDomains("url")}>Parse URLs</button>
+              <button className="parser__topbar__buttons__parsebox__button parser__topbar__buttons__button" id="parseURLs"
+                      onClick={()=> parseDomains("url")}>Parse URLs</button>
+            </div>
 
-            <button className="parser__topbar__buttons__button parser__topbar__buttons__button--open" id="parseOpen"
-                    onClick={() => openParsedDomains()}>Open parsed links</button>
+            <div className="parser__topbar__buttons__openbox">
+              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="parseOpen"
+                      onClick={() => openParsedDomains()}>Open parsed links</button>
+              <div className="parser__topbar__buttons__openbox__filter">
+                <p className="parser__topbar__buttons__openbox__filter__title">Filter for pattern:</p>
+                <input type="text" className="parser__topbar__buttons__openbox__filter__input" id="filterInput"/>
+              </div>
+
+            </div>
+
           </div>
         </div>
         <label>

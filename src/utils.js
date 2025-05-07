@@ -76,7 +76,7 @@ function getLinks() {
   // Set them in array with unique values
   worklist = [...new Set(worklist)];
 
-  // Validate domains and remove invalid
+  // Validate domains and remove duplicates
   let tempArray = [];
   worklist.forEach((domain) => {
     let el = parse(domain.text)
@@ -87,12 +87,12 @@ function getLinks() {
   worklist = [...new Set(tempArray)];
 
   // Reset filtered array/output and set domains
-  filteredLinksArray = [];
+  /*filteredLinksArray = [];
   tempArray = [];
   worklist.forEach((domain) => {
     tempArray.push(domain);
-  });
-  filteredLinksArray= [...new Set(tempArray)];
+  });*/
+  filteredLinksArray= [...new Set(worklist)];
 
   // Get a text list from filtered array
   worklist = createListFromArray(filteredLinksArray);
@@ -117,7 +117,8 @@ function createListFromArray(domainArray){
 
 // Accepts either "domain" or "hostname" as a param, sets filtered array and values to frontend
 export function parseDomains(type){
-  let links;
+  let links = {};
+  let filter = document.getElementById("filterInput").value;
   switch(type){
     case "hostname": links = getDomains(type);
     break;
@@ -125,6 +126,12 @@ export function parseDomains(type){
     break;
     case "url": links = getLinks();
     break;
+  }
+
+  // If filter option is present, filter the array for it and update worklist
+  if (filter){
+    links.filteredLinksArray = links.filteredLinksArray.filter((link) => link.includes(filter));
+    links.worklist = createListFromArray(links.filteredLinksArray);
   }
 
   // Set values to front-end
