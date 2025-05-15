@@ -173,9 +173,10 @@ export function parseDomains(type){
     links.worklist = createListFromArray(links.filteredLinksArray);
   }
 
-  // Set values to front-end
+  // Set values to front-end and update array used by other functions
   document.getElementById("parserOutput").value = links.worklist;
   document.getElementById("parserOutputCounter").innerText = `Number of links: ${links.filteredLinksArray.length}`;
+  filteredLinksArray = links.filteredLinksArray;
 }
 
 
@@ -195,6 +196,8 @@ export function openParsedDomains(){
   }
 }
 
+
+// Searches for targets on Google
 export function findTargets(){
   // Check if there are parsed links
   if (document.getElementById("parserOutput").value) {
