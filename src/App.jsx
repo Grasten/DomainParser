@@ -14,7 +14,7 @@ function App() {
         <div className="parser__topbar">
           <h1 className="parser__topbar__title font-bebas">
             Domain parser
-            <span className="parser__topbar__title__version">ver: 0.3</span>
+            <span className="parser__topbar__title__version">ver: 0.4</span>
           </h1>
           <div className="parser__topbar__inputs">
             <label htmlFor="parserInput" className="parser__topbar__inputs__label"></label>
@@ -45,20 +45,22 @@ function App() {
         </div>
 
         <div className="parser__options">
-          <label htmlFor="checkboxMail" className="parser__options__mail">
-            Ignore mailer domains (e.g. gmail.com):
-            <input type="checkbox" className="parser__options__mail__checkbox" id="checkboxMail"
+
+          <label htmlFor="checkboxSkip" className="parser__options__checkModule">
+            Skip common domains (e.g. google.com):
+            <input defaultChecked="true" type="checkbox" className="parser__options__checkModule__checkbox" id="checkboxSkip"
             onChange={() => {
-              let el = document.getElementById("checkboxMailVis");
-              if (el.classList.contains("parser__options__mail__vis-checkbox--checked")) {
-                el.classList.remove("parser__options__mail__vis-checkbox--checked");
+              let el = document.getElementById("checkboxSkipVis");
+              if (el.classList.contains("parser__options__checkModule__vis-checkbox--checked")) {
+                el.classList.remove("parser__options__checkModule__vis-checkbox--checked");
               } else {
-                el.classList.add("parser__options__mail__vis-checkbox--checked");
+                el.classList.add("parser__options__checkModule__vis-checkbox--checked");
               }
             }
             }
             />
-            <div className="parser__options__mail__vis-checkbox" id="checkboxMailVis">
+            <div className="parser__options__checkModule__vis-checkbox parser__options__checkModule__vis-checkbox--checked"
+                 id="checkboxSkipVis">
               <svg height="100%" width="100%" version="1.1" id="Capa_1" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink"
                    viewBox="0 0 32 32" xmlSpace="preserve">
                     <polygon points="11.941,28.877 0,16.935 5.695,11.24 11.941,17.486 26.305,3.123 32,8.818"/>
@@ -66,10 +68,57 @@ function App() {
             </div>
           </label>
 
-          <div className="parser__options__filter">
+          <div className="parser__options__filter parser__options__general">
             <p className="parser__options__filter__title">Filter:</p>
             <input type="text" className="parser__options__filter__input" autoComplete="false" id="filterInput"/>
           </div>
+
+          <div className="parser__options__general">
+            Reset input on
+            <label htmlFor="checkboxResetOnParse" className="parser__options__checkModule">
+              parse:
+              <input type="checkbox" className="parser__options__checkModule__checkbox" id="checkboxResetOnParse"
+                     onChange={() => {
+                       let el = document.getElementById("checkboxResetOnParseVis");
+                       if (el.classList.contains("parser__options__checkModule__vis-checkbox--checked")) {
+                         el.classList.remove("parser__options__checkModule__vis-checkbox--checked");
+                       } else {
+                         el.classList.add("parser__options__checkModule__vis-checkbox--checked");
+                       }
+                     }
+                     }
+              />
+              <div className="parser__options__checkModule__vis-checkbox"
+                   id="checkboxResetOnParseVis">
+                <svg height="100%" width="100%" version="1.1" id="Capa_1" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink"
+                     viewBox="0 0 32 32" xmlSpace="preserve">
+                  <polygon points="11.941,28.877 0,16.935 5.695,11.24 11.941,17.486 26.305,3.123 32,8.818"/>
+                </svg>
+              </div>
+            </label>
+            <label htmlFor="checkboxResetOnOpen" className="parser__options__checkModule">
+              open:
+              <input type="checkbox" className="parser__options__checkModule__checkbox" id="checkboxResetOnOpen"
+                     onChange={() => {
+                       let el = document.getElementById("checkboxResetOnOpenVis");
+                       if (el.classList.contains("parser__options__checkModule__vis-checkbox--checked")) {
+                         el.classList.remove("parser__options__checkModule__vis-checkbox--checked");
+                       } else {
+                         el.classList.add("parser__options__checkModule__vis-checkbox--checked");
+                       }
+                     }
+                     }
+              />
+              <div className="parser__options__checkModule__vis-checkbox"
+                   id="checkboxResetOnOpenVis">
+                <svg height="100%" width="100%" version="1.1" id="Capa_1" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink"
+                     viewBox="0 0 32 32" xmlSpace="preserve">
+                  <polygon points="11.941,28.877 0,16.935 5.695,11.24 11.941,17.486 26.305,3.123 32,8.818"/>
+                </svg>
+              </div>
+            </label>
+          </div>
+
         </div>
 
         <label>

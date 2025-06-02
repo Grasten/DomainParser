@@ -8,9 +8,10 @@ let filteredLinksArray = [];
 const regBracketDotText = /(\s?\W\s?)dot(\s?\W\s?)/ig;
 const regBracketDot = /(\s?\W\s?)\.(\s?\W\s?)/ig;
 const regDomains = /(?<=^|[^a-z0-9])((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[^a-z0-9]|$)/gi;
-const regHttps = /hxxps\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
-const regHttp = /hxxp\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
-const mailerDomains = [
+const regHxxps = /hxxps\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
+const regHxxp = /hxxp\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
+const regSemicolon = / ?\[:] ?/gi;
+const skipDomains = [
   "gmail.com",
   "yahoo.com",
   "hotmail.com",
@@ -31,6 +32,13 @@ const mailerDomains = [
   "naver.com",
   "163.com",
   "rediffmail.com",
+  "jellyfish.systems",
+  "google.com",
+  "namecheap.com",
+  "1e100.net",
+  "gappssmtp.com",
+  "microsoft.com",
+  "windows.net",
 ]
 
 // --- BASE FUNCTIONS ---
@@ -43,8 +51,9 @@ function getInputText(){
   // Remove brackets, fix protocols
   worklist = worklist.replace(regBracketDot, ".");
   worklist = worklist.replace(regBracketDotText, ".");
-  worklist = worklist.replace(regHttps, "https://");
-  worklist = worklist.replace(regHttp, "http://");
+  worklist = worklist.replace(regHxxps, "https://");
+  worklist = worklist.replace(regHxxp, "http://");
+  worklist = worklist.replace(regSemicolon, ":");
   return worklist;
 }
 
@@ -53,7 +62,7 @@ function getDomains(type) {
   // Get text from input
   let worklist = getInputText();
 
-  // Search for links in text
+  // Search for domains in text
   worklist = worklist.match(regDomains) || [];
 
   // Set them in array with unique values
@@ -65,6 +74,12 @@ function getDomains(type) {
   worklist.forEach((domain) => {
     let el = parse(domain)
     if (el.isIcann){
+
+      //exception so that it.com is treated as a tld and not as a domain
+      if (el.domain === "it.com"){
+        el.domain = el.hostname.match(/\w*.it.com/gm)[0];
+      }
+
       tempArray.push(el);
     }
   });
@@ -151,26 +166,32 @@ export function parseDomains(type){
   }
 
   // If filter option is present, filter the array for it and update worklist
+
   if (filter){
     links.filteredLinksArray = links.filteredLinksArray.filter((link) => link.includes(filter));
     links.worklist = createListFromArray(links.filteredLinksArray);
   }
 
-  // If ignore mailers enabled, filter the array for it and update worklist
-  if (document.getElementById("checkboxMail").checked){
+  // If skip domains enabled, filter the array for it and update worklist
+  if (document.getElementById("checkboxSkip").checked){
     let tempArray = [];
     links.filteredLinksArray.forEach((domain) => {
-      let mailerDetected, el = domain;
-      mailerDomains.forEach(mailer => {
-        if (el.match(`${mailer}`)){
-          mailerDetected = true;
+      let skipDetected, el = domain;
+      skipDomains.forEach(skip => {
+        if (el.match(`${skip}`)){
+          skipDetected = true;
         }
       })
-      if(!mailerDetected){tempArray.push(el)}
+      if(!skipDetected){tempArray.push(el)}
     });
 
     links.filteredLinksArray = [...new Set(tempArray)];
     links.worklist = createListFromArray(links.filteredLinksArray);
+  }
+
+  // Reset input if option is enabled
+  if (document.getElementById("checkboxResetOnParse").checked){
+    document.getElementById("parserInput").value = "";
   }
 
   // Set values to front-end and update array used by other functions
@@ -180,35 +201,27 @@ export function parseDomains(type){
 }
 
 
-// Opens parsed domains, can parse them first if needed
+// Opens parsed domains
 export function openParsedDomains(){
-  // Check if there are parsed links
-  if (document.getElementById("parserOutput").value) {
-    filteredLinksArray.forEach((el) => {
-      (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
-    })
-  } else {
-    // If no links parsed, parse hostnames and open
-    parseDomains("hostname");
-    filteredLinksArray.forEach((el) => {
-      (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
-    })
+
+  // Reset input if option is enabled
+  if (document.getElementById("checkboxResetOnOpen").checked){
+    document.getElementById("parserInput").value = "";
   }
+    filteredLinksArray.forEach((el) => {
+      (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
+    })
 }
 
 
 // Searches for targets on Google
 export function findTargets(){
-  // Check if there are parsed links
-  if (document.getElementById("parserOutput").value) {
-    filteredLinksArray.forEach((el) => {
-      window.open(`https://www.google.com/search?q=${el}`);
-    })
-  } else {
-    // If no links parsed, parse hostnames and open
-    parseDomains("domain");
-    filteredLinksArray.forEach((el) => {
-      window.open(`https://www.google.com/search?q=${el}`);
-    })
+
+  // Reset input if option is enabled
+  if (document.getElementById("checkboxResetOnOpen").checked){
+    document.getElementById("parserInput").value = "";
   }
+    filteredLinksArray.forEach((el) => {
+      window.open(`https://www.google.com/search?q=${el}`);
+    })
 }
