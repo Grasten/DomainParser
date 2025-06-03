@@ -178,7 +178,7 @@ export function parseDomains(type){
     links.filteredLinksArray.forEach((domain) => {
       let skipDetected, el = domain;
       skipDomains.forEach(skip => {
-        if (el.match(`${skip}`)){
+        if (el === skip){
           skipDetected = true;
         }
       })
