@@ -16,6 +16,12 @@ body {
     grid-template-rows: 1fr;
     background: $c-dark;
 }
+
+button {
+    cursor: pointer;
+    user-select: none;
+}
+
 #root{
     display: flex;
     justify-content: center;
@@ -63,12 +69,36 @@ body {
             height: 100%;
             display: flex;
             flex-direction: column;
-            &label{
-                display: none;
-            }
-            &__input{
+            &__box{
                 height: 100%;
                 width: 100%;
+                position: relative;
+                &__input{
+                    height: 100%;
+                    width: 100%;
+                }
+                &__clear{
+                    position: absolute;
+                    top: 0;
+                    right: 0;
+                    height: 3rem;
+                    width: 5rem;
+                    border-radius: 0 0 0 1rem;
+                    background-color: $c-green;
+                    color: rgba(255, 199, 0, 0.9);
+                    cursor: pointer;
+                    text-shadow: 0 0 3px black;
+                    font-size: 1.1rem;
+                    &:hover{
+                        color: rgba($c-yellow, 1);
+                        text-shadow: 0 0 5px black;
+                        border: 1px solid rgba($c-yellow, 0.69);
+                    }
+                    &:active{
+                        text-shadow: 0 0 3px black;
+                        border: none;
+                    }
+                }
             }
         }
         &__buttons{
@@ -78,7 +108,6 @@ body {
             grid-gap: 20px;
             grid-template-rows: 1fr;
             grid-template-columns: 1fr 1fr;
-            user-select: none;
             &__note{
                 height: 80px;
                 width: 150px;
@@ -94,23 +123,15 @@ body {
                 text-shadow: 0 0 3px black;
                 font-size: 1.1rem;
                 font-family: $f-roboto;
-
-                transition: all linear 0.05s;
                 color: rgba($c-yellow, 0.9);
-                box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.69);
-                //border: 2px solid rgba(0, 0, 0, 0.69);
+                box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.69);
                 &:hover{
                     color: rgba($c-yellow, 1);
-                    //order-width: 0;
                     box-shadow: 0 0 0 1px rgba($c-yellow, 0.5);
                     text-shadow: 0 0 5px  black;
-                    //scale: 105%;
                 }
                 &:active{
-                    transition-duration: 0s;
-                    //border-width: 3px;
-                    box-shadow: 0 0 1px 2px rgba($c-yellow, 0.7);
-                    //scale: 99%;
+                    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.69);
                     text-shadow: 0 0 3px black;
                 }
             }
@@ -181,7 +202,6 @@ body {
                 justify-content: center;
                 align-items: center;
                 background-color: $c-light-gray;
-                transition: all linear 1s;
                 &>svg{
                     height: 0.8rem;
                     width: 0.8rem;
@@ -198,7 +218,9 @@ body {
         }
 
         &__filter{
-            &__title{}
+            &__title{
+                user-select: none;
+            }
             &__input{
                 padding: 2px 5px;
                 width: 120px;
@@ -221,7 +243,6 @@ body {
         padding: 5px;
         font-size: 0.8rem;
         border-radius: 1px;
-        //box-shadow: 0 0 0 3px rgba(white,0.2);
         border: 1px solid rgba(black,0.5);
         font-family: $f-martian;
         &:focus-visible{

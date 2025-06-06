@@ -189,11 +189,6 @@ export function parseDomains(type){
     links.worklist = createListFromArray(links.filteredLinksArray);
   }
 
-  // Reset input if option is enabled
-  if (document.getElementById("checkboxResetOnParse").checked){
-    document.getElementById("parserInput").value = "";
-  }
-
   // Set values to front-end and update array used by other functions
   document.getElementById("parserOutput").value = links.worklist;
   document.getElementById("parserOutputCounter").innerText = `Number of links: ${links.filteredLinksArray.length}`;
@@ -204,10 +199,6 @@ export function parseDomains(type){
 // Opens parsed domains
 export function openParsedDomains(){
 
-  // Reset input if option is enabled
-  if (document.getElementById("checkboxResetOnOpen").checked){
-    document.getElementById("parserInput").value = "";
-  }
     filteredLinksArray.forEach((el) => {
       (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
     })
@@ -217,10 +208,6 @@ export function openParsedDomains(){
 // Searches for targets on Google
 export function findTargets(){
 
-  // Reset input if option is enabled
-  if (document.getElementById("checkboxResetOnOpen").checked){
-    document.getElementById("parserInput").value = "";
-  }
     filteredLinksArray.forEach((el) => {
       window.open(`https://www.google.com/search?q=${el}`);
     })

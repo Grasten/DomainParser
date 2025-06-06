@@ -14,12 +14,17 @@ function App() {
         <div className="parser__topbar">
           <h1 className="parser__topbar__title font-bebas">
             Domain parser
-            <span className="parser__topbar__title__version">ver: 0.4</span>
+            <span className="parser__topbar__title__version">ver: 0.4.1</span>
           </h1>
           <div className="parser__topbar__inputs">
             <label htmlFor="parserInput" className="parser__topbar__inputs__label"></label>
-            <textarea className="parser__topbar__inputs__input parser-fields" id="parserInput"
-                      defaultValue=""></textarea>
+            <div className="parser__topbar__inputs__box">
+              <button className="parser__topbar__inputs__box__clear"
+                      onClick={() => document.getElementById("parserInput").value = ""}>Clear</button>
+              <textarea className="parser__topbar__inputs__box__input parser-fields" id="parserInput"
+                        defaultValue=""></textarea>
+            </div>
+
           </div>
           <div className="parser__topbar__buttons">
             <div className="parser__topbar__buttons__parsebox">
@@ -73,7 +78,7 @@ function App() {
             <input type="text" className="parser__options__filter__input" autoComplete="false" id="filterInput"/>
           </div>
 
-          <div className="parser__options__general">
+          {/*<div className="parser__options__general">
             Reset input on
             <label htmlFor="checkboxResetOnParse" className="parser__options__checkModule">
               parse:
@@ -117,7 +122,7 @@ function App() {
                 </svg>
               </div>
             </label>
-          </div>
+          </div>*/}
 
         </div>
 
