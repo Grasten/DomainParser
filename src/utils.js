@@ -39,6 +39,15 @@ const skipDomains = [
   "gappssmtp.com",
   "microsoft.com",
   "windows.net",
+  "apple.com",
+  "w3.org",
+  "stratoserver.net",
+  "radix.support",
+  "freshemail.io",
+  "freshdesk.com",
+  "icann.org",
+  "zohomail.com",
+  "scamsurvivors.com",
 ]
 
 // --- BASE FUNCTIONS ---
@@ -57,7 +66,7 @@ function getInputText(){
   return worklist;
 }
 
-// Returns an array of verified domains from input
+// Returns an array of verified domains from input. Accepts either hostname or domain as a type
 function getDomains(type) {
   // Get text from input
   let worklist = getInputText();
@@ -195,20 +204,36 @@ export function parseDomains(type){
   filteredLinksArray = links.filteredLinksArray;
 }
 
-
 // Opens parsed domains
 export function openParsedDomains(){
-
     filteredLinksArray.forEach((el) => {
       (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
     })
 }
 
-
 // Searches for targets on Google
 export function findTargets(){
-
     filteredLinksArray.forEach((el) => {
       window.open(`https://www.google.com/search?q=${el}`);
     })
+}
+
+// Copies to clipboard command from the template
+export async function copyCommand(type){
+  let domains = getDomains("domain").filteredLinksArray;
+  if (!domains[0]) return;
+
+  let tempDomains = "", text = "";
+  if (type === "whois"){
+    try {
+      domains.forEach((domain, index) => {
+        let line = `${domain}${index === domains.length-1 ? "" : "\n"}`;
+        tempDomains += (line);
+      })
+      text = (`declare -a testStatus=(${tempDomains})` + "\nfor i in ${testStatus[*]}; do echo -e $i: `whois $i |grep 'Status:'`; done");
+      console.log(text);
+      await navigator.clipboard.writeText(text);
+    }
+    catch (e) {console.log(e)}
+  }
 }

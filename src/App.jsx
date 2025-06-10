@@ -1,5 +1,5 @@
 import './App.scss'
-import {parseDomains, openParsedDomains, findTargets} from "./utils.js";
+import {parseDomains, openParsedDomains, findTargets, copyCommand} from "./utils.js";
 
 function App() {
 
@@ -10,12 +10,31 @@ function App() {
       <link
         href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Martian+Mono:wght@600&family=Roboto+Mono&display=swap"
         rel="stylesheet"/>
-      <div className="parser">
+      <div className="parser parser--dark">
+
         <div className="parser__topbar">
-          <h1 className="parser__topbar__title font-bebas">
-            Domain parser
-            <span className="parser__topbar__title__version">ver: 0.4.1</span>
-          </h1>
+          <div className="parser__topbar__container">
+            <h1 className="parser__topbar__container__title font-bebas">
+              Domain parser
+              <span className="parser__topbar__container__title__version">ver: 0.4.2</span>
+            </h1>
+            <button className="parser__topbar__container__theme"
+                    onClick={() => {
+                      let el = document.getElementsByClassName("parser")[0];
+                      if (el.classList.contains("parser--dark")) {
+                        el.classList.remove("parser--dark");
+                        document.getElementById("root").classList.add("light");
+                        document.getElementsByClassName("parser__topbar__container__theme")[0].innerText = "dark";
+                      } else {
+                        el.classList.add("parser--dark");
+                        document.getElementById("root").classList.remove("light");
+                        document.getElementsByClassName("parser__topbar__container__theme")[0].innerText = "light";
+                      }
+                    }
+                    }
+            >light</button>
+          </div>
+
           <div className="parser__topbar__inputs">
             <label htmlFor="parserInput" className="parser__topbar__inputs__label"></label>
             <div className="parser__topbar__inputs__box">
@@ -44,6 +63,12 @@ function App() {
 
               <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="parseOpen"
                       onClick={() => findTargets()}>Find possible targets</button>
+
+              <div className="parser__topbar__buttons__button parser__topbar__buttons__split
+              parser__topbar__buttons__openbox__button" id="parseOpen">
+                <button className="parser__topbar__buttons__button" onClick={() => copyCommand("whois")}>Copy bulk Whois</button>
+                <button className="parser__topbar__buttons__button">Nothing</button>
+              </div>
             </div>
 
           </div>
@@ -75,7 +100,7 @@ function App() {
 
           <div className="parser__options__filter parser__options__general">
             <p className="parser__options__filter__title">Filter:</p>
-            <input type="text" className="parser__options__filter__input" autoComplete="false" id="filterInput"/>
+            <input type="text" className="parser__options__filter__input parser-fields" autoComplete="false" id="filterInput"/>
           </div>
 
           {/*<div className="parser__options__general">
@@ -130,6 +155,7 @@ function App() {
           <textarea className="parser__output parser-fields" id="parserOutput"></textarea>
         </label>
         <p className="parser__output__counter" id="parserOutputCounter">Number of links:</p>
+
       </div>
     </>
   )
