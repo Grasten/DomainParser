@@ -221,7 +221,7 @@ export function findTargets(){
 // Copies to clipboard command from the template
 export async function copyCommand(type){
   let domains = getDomains("domain").filteredLinksArray;
-  if (!domains[0]) return;
+  let button = document.getElementById(`get${type}`);
 
   let tempDomains = "", text = "";
   if (type === "whois"){
@@ -230,9 +230,39 @@ export async function copyCommand(type){
         let line = `${domain}${index === domains.length-1 ? "" : "\n"}`;
         tempDomains += (line);
       })
-      text = (`declare -a testStatus=(${tempDomains})` + "\nfor i in ${testStatus[*]}; do echo -e $i: `whois $i |grep 'Status:'`; done");
-      console.log(text);
+
+      text = (`declare -a testStatus=(${tempDomains})
+for i in` + "${testStatus[@]}" + `; do
+  echo -e "$i: $(whois "$i" | grep 'Status:')"
+echo    
+done`);
+
       await navigator.clipboard.writeText(text);
+      button.innerHTML = "Copied!";
+      setTimeout(() => {
+        button.innerHTML = "Copy bulk Whois";
+      }, 1000);
+    }
+    catch (e) {console.log(e)}
+  } else if (type === "dig"){
+    try {
+      domains.forEach((domain, index) => {
+        let line = `${domain}${index === domains.length-1 ? "" : "\n"}`;
+        tempDomains += (line);
+      })
+
+      text = (`declare -a testStatus=(${tempDomains})
+for i in` + "${testStatus[@]}" + `; do
+  echo "=== $i ==="
+  dig +trace +nodnssec "$i" | grep "$i" | tail -n 3
+  echo    
+done`);
+
+      await navigator.clipboard.writeText(text);
+      button.innerHTML = "Copied!";
+      setTimeout(() => {
+        button.innerHTML = `Copy bulk <br/> dig`;
+      }, 1000);
     }
     catch (e) {console.log(e)}
   }

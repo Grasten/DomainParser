@@ -66,8 +66,10 @@ function App() {
 
               <div className="parser__topbar__buttons__button parser__topbar__buttons__split
               parser__topbar__buttons__openbox__button" id="parseOpen">
-                <button className="parser__topbar__buttons__button" onClick={() => copyCommand("whois")}>Copy bulk Whois</button>
-                <button className="parser__topbar__buttons__button">Nothing</button>
+                <button className="parser__topbar__buttons__button" id="getwhois"
+                        onClick={() => copyCommand("whois")}>Copy bulk Whois</button>
+                <button className="parser__topbar__buttons__button" id="getdig"
+                        onClick={() => copyCommand("dig")}>Copy bulk {<br/>} dig</button>
               </div>
             </div>
 
