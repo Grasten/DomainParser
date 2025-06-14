@@ -232,7 +232,7 @@ export async function copyCommand(type){
       })
 
       text = (`declare -a testStatus=(${tempDomains})
-for i in` + "${testStatus[@]}" + `; do
+for i in ` + '"${testStatus[@]}"' + `; do
   echo -e "$i: $(whois "$i" | grep 'Status:')"
 echo    
 done`);
@@ -252,7 +252,7 @@ done`);
       })
 
       text = (`declare -a testStatus=(${tempDomains})
-for i in` + "${testStatus[@]}" + `; do
+for i in ` + '"${testStatus[@]}"' + `; do
   echo "=== $i ==="
   dig +trace +nodnssec "$i" | grep "$i" | tail -n 3
   echo    
