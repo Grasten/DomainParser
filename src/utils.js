@@ -2,7 +2,9 @@ import { parse } from 'tldts';
 import linkifyit from 'linkify-it';
 const linkify = linkifyit();
 import tlds from 'tlds';
+import SLTLDs from "./SLTLDs.jsx";
 linkify.tlds(tlds)
+linkify.tlds(SLTLDs)
 
 let filteredLinksArray = [];
 const regBracketDotText = /(\s?\W\s?)dot(\s?\W\s?)/ig;
@@ -48,12 +50,24 @@ const skipDomains = [
   "icann.org",
   "zohomail.com",
   "scamsurvivors.com",
+  "zerofoxtakedowns.com",
+  "takedownreporting.com",
+  "wipo.int",
+  "zerofox.com",
+  "namecheaphosting.com",
+  "office365.com",
+  "enom.com",
+  "mxrecord.io",
+  "acidtool.com",
+  "yahoo.co.uk",
+  "engagement.ai",
 ]
 
 // --- BASE FUNCTIONS ---
 
 // Returns input text with basic parsing (brackets, protocols)
 function getInputText(){
+
   // Get domains from input
   let worklist = document.getElementById("parserInput").value;
 
@@ -82,13 +96,12 @@ function getDomains(type) {
 
   worklist.forEach((domain) => {
     let el = parse(domain)
-    if (el.isIcann){
-
-      //exception so that it.com is treated as a tld and not as a domain
-      if (el.domain === "it.com"){
-        el.domain = el.hostname.match(/\w*.it.com/gm)[0];
+    if (el.isIcann && el.domain && !SLTLDs.includes(el.hostname)) {
+      // Treat known used second level TLDs (us.com) as TLDs instead of domains
+      if (SLTLDs.includes(el.domain) && !SLTLDs.includes(el.hostname)){
+        let tempRegExp = new RegExp(`.+\\.${el.domain}`, "gm");
+        el.domain = el.hostname.match(tempRegExp)[0];
       }
-
       tempArray.push(el);
     }
   });
@@ -124,9 +137,12 @@ function getLinks() {
   // Validate domains and remove duplicates
   let tempArray = [];
   worklist.forEach((domain) => {
-    let el = parse(domain.text)
-    if (el.isIcann){
-      tempArray.push(domain.text);
+    //Skip emails
+    if (!domain.text.includes("@")) {
+      let el = parse(domain.text);
+      if (el.isIcann) {
+        tempArray.push(domain.text);
+      }
     }
   });
   worklist = [...new Set(tempArray)];
@@ -175,7 +191,6 @@ export function parseDomains(type){
   }
 
   // If filter option is present, filter the array for it and update worklist
-
   if (filter){
     links.filteredLinksArray = links.filteredLinksArray.filter((link) => link.includes(filter));
     links.worklist = createListFromArray(links.filteredLinksArray);
@@ -206,16 +221,34 @@ export function parseDomains(type){
 
 // Opens parsed domains
 export function openParsedDomains(){
-    filteredLinksArray.forEach((el) => {
-      (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
-    })
+
+  let button = document.getElementById(`openLinks`);
+  if(!filteredLinksArray[0]){
+    button.innerHTML = "No parsed links";
+    setTimeout(() => {
+      button.innerHTML = "Open parsed links";
+    }, 1000);
+  }
+
+  filteredLinksArray.forEach((el) => {
+    (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
+  })
 }
 
 // Searches for targets on Google
 export function findTargets(){
-    filteredLinksArray.forEach((el) => {
-      window.open(`https://www.google.com/search?q=${el}`);
-    })
+
+  let button = document.getElementById(`openTargets`);
+  if(!filteredLinksArray[0]){
+    button.innerHTML = "No parsed domains";
+    setTimeout(() => {
+      button.innerHTML = "Find possible targets";
+    }, 1000);
+  }
+
+  filteredLinksArray.forEach((el) => {
+    window.open(`https://www.google.com/search?q=${el}`);
+  })
 }
 
 // Copies to clipboard command from the template

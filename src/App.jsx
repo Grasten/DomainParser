@@ -10,7 +10,7 @@ function App() {
       <link
         href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Martian+Mono:wght@600&family=Roboto+Mono&display=swap"
         rel="stylesheet"/>
-      <div className="parser parser--dark">
+      <div className="parser">
 
         <div className="parser__topbar">
           <div className="parser__topbar__container">
@@ -23,11 +23,11 @@ function App() {
                       let el = document.getElementsByClassName("parser")[0];
                       if (el.classList.contains("parser--dark")) {
                         el.classList.remove("parser--dark");
-                        document.getElementById("root").classList.add("light");
+                        document.getElementById("root").classList.remove("dark");
                         document.getElementsByClassName("parser__topbar__container__theme")[0].innerText = "dark";
                       } else {
                         el.classList.add("parser--dark");
-                        document.getElementById("root").classList.remove("light");
+                        document.getElementById("root").classList.add("dark");
                         document.getElementsByClassName("parser__topbar__container__theme")[0].innerText = "light";
                       }
                     }
@@ -58,10 +58,10 @@ function App() {
             </div>
 
             <div className="parser__topbar__buttons__openbox">
-              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="parseOpen"
+              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="openLinks"
                       onClick={() => openParsedDomains()}>Open parsed links</button>
 
-              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="parseOpen"
+              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="openTargets"
                       onClick={() => findTargets()}>Find possible targets</button>
 
               <div className="parser__topbar__buttons__button parser__topbar__buttons__split

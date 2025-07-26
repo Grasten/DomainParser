@@ -43,9 +43,9 @@ button {
 #root{
     display: flex;
     justify-content: center;
-    background-color: $c-dark-d;
-    &.light{
-        background-color: $c-dark;
+    background-color: $c-dark;
+    &.dark{
+        background-color: $c-dark-d;
     }
 }
 * {
@@ -107,14 +107,14 @@ button {
                 background-color: $c-light-gray;
                 text-shadow: none;
                 transition: all .1s ease-in-out;
-                box-shadow: 0 0 1px 2px black;
+                box-shadow: 0 0 1px 2px $c-darker-d;
                 text-transform: uppercase;
                 font-weight: bold;
                 font-family: $f-martian;
                 &:hover{
                     color: black;
                     text-shadow: none;
-                    box-shadow: 0 0 5px 3px black;
+                    box-shadow: 0 0 5px 3px $c-darker-d;
                     background-color: white;
                 }
             }
@@ -327,10 +327,10 @@ button {
                     &__theme{
                         color: $c-light-gray;
                         background-color: $c-darker-d;
-                        box-shadow: 0 0 1px 1px white;
+                        box-shadow: 0 0 1px 1px rgba($c-yellow,0.7);
                         &:hover{
                             color: white;
-                            box-shadow: 0 0 3px 2px white;
+                            box-shadow: 0 0 3px 2px rgba($c-yellow,0.7);
                             background-color: black;
                         }
                     }
