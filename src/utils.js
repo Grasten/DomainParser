@@ -98,7 +98,7 @@ function getDomains(type) {
     let el = parse(domain)
     if (el.isIcann && el.domain && !SLTLDs.includes(el.hostname)) {
       // Treat known used second level TLDs (us.com) as TLDs instead of domains
-      if (SLTLDs.includes(el.domain) && !SLTLDs.includes(el.hostname)){
+      if (SLTLDs.includes(el.domain)){
         let tempRegExp = new RegExp(`.+\\.${el.domain}`, "gm");
         el.domain = el.hostname.match(tempRegExp)[0];
       }
@@ -119,7 +119,6 @@ function getDomains(type) {
 
   // Get a text list from filtered array
   worklist = createListFromArray(filteredLinksArray);
-
   return({worklist, filteredLinksArray});
 }
 
@@ -137,6 +136,7 @@ function getLinks() {
   // Validate domains and remove duplicates
   let tempArray = [];
   worklist.forEach((domain) => {
+
     //Skip emails
     if (!domain.text.includes("@")) {
       let el = parse(domain.text);
@@ -228,11 +228,11 @@ export function openParsedDomains(){
     setTimeout(() => {
       button.innerHTML = "Open parsed links";
     }, 1000);
+  } else {
+    filteredLinksArray.forEach((el) => {
+      linkify.match(el) ? window.open(`${el}`) : window.open(`https://${el}`);
+    })
   }
-
-  filteredLinksArray.forEach((el) => {
-    (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
-  })
 }
 
 // Searches for targets on Google
