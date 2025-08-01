@@ -1,5 +1,5 @@
 import './App.scss'
-import {parseDomains, openParsedDomains, findTargets, copyCommand} from "./utils.js";
+import {parseDomains, openParsedDomains, findTargets, copyCommand, handleDigQuery, handleWhoisQuery} from "./utils.js";
 
 function App() {
 
@@ -59,10 +59,23 @@ function App() {
 
             <div className="parser__topbar__buttons__openbox">
               <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="openLinks"
-                      onClick={() => openParsedDomains()}>Open parsed links</button>
+                      onClick={openParsedDomains}>Open parsed links</button>
 
               <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="openTargets"
-                      onClick={() => findTargets()}>Find possible targets</button>
+                      onClick={findTargets}>Find possible targets</button>
+
+              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="runDig"
+                      onClick={handleDigQuery}>Run Dig Query</button>
+
+              <select id="recordTypeSelect">
+                <option value="A">A</option>
+                <option value="MX">MX</option>
+                <option value="NS">NS</option>
+                <option value="TXT">TXT</option>
+              </select>
+
+              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="runWhois"
+                      onClick={handleWhoisQuery}>Run WHOIS Query</button>
 
               <div className="parser__topbar__buttons__button parser__topbar__buttons__split
               parser__topbar__buttons__openbox__button" id="parseOpen">

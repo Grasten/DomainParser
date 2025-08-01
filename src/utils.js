@@ -61,6 +61,22 @@ const skipDomains = [
   "acidtool.com",
   "yahoo.co.uk",
   "engagement.ai",
+  "withheldforprivacy.com",
+  "legalmail.it",
+  "nic.art",
+  "mailgun.net",
+  "fonts.googleapis.com",
+  "gstatic.com",
+  "amazonaws.com",
+  "facebook.com",
+  "linkedin.com",
+  "tiktok.com",
+  "salesforce.com",
+  "registrar-servers.com",
+  "spamcop.net",
+  "googlegroups.com",
+  "mailinblue.com",
+  "comcast.net",
 ]
 
 // --- BASE FUNCTIONS ---
@@ -172,6 +188,239 @@ function createListFromArray(domainArray){
   return domainList;
 }
 
+// Copies to clipboard command from the template
+async function copyCommand(type){
+  let domains = getDomains("domain").filteredLinksArray;
+  let button = document.getElementById(`get${type}`);
+
+  let tempDomains = "", text = "";
+  if (type === "whois"){
+    try {
+      domains.forEach((domain, index) => {
+        let line = `${domain}${index === domains.length-1 ? "" : "\n"}`;
+        tempDomains += (line);
+      })
+
+      text = (`declare -a testStatus=(${tempDomains})
+for i in ` + '"${testStatus[@]}"' + `; do
+  echo -e "$i: $(whois "$i" | grep 'Status:')"
+echo    
+done`);
+
+      await navigator.clipboard.writeText(text);
+      button.innerHTML = "Copied!";
+      setTimeout(() => {
+        button.innerHTML = "Copy bulk Whois";
+      }, 1000);
+    }
+    catch (e) {console.log(e)}
+  } else if (type === "dig"){
+    try {
+      domains.forEach((domain, index) => {
+        let line = `${domain}${index === domains.length-1 ? "" : "\n"}`;
+        tempDomains += (line);
+      })
+
+      text = (`declare -a testStatus=(${tempDomains})
+for i in ` + '"${testStatus[@]}"' + `; do
+  echo "=== $i ==="
+  dig +trace +nodnssec "$i" | grep "$i" | tail -n 3
+  echo    
+done`);
+
+      await navigator.clipboard.writeText(text);
+      button.innerHTML = "Copied!";
+      setTimeout(() => {
+        button.innerHTML = `Copy bulk <br/> dig`;
+      }, 1000);
+    }
+    catch (e) {console.log(e)}
+  }
+}
+
+async function fetchDig(domain) {
+  const res = await fetch(`https://grasten.org/api/dig.php?domain=${domain}`);
+  const json = await res.json();
+  console.log(json.result);
+}
+
+async function fetchWhois(domain) {
+  const res = await fetch(`https://grasten.org/api/whois.php?domain=${domain}`);
+  const json = await res.json();
+  console.log(json.result);
+}
+
+async function handleDigQuery() {
+  const button = document.getElementById("runDig");
+  button.innerText = "Running...";
+
+  const domains = filteredLinksArray || [];
+  if (!domains.length) {
+    button.innerText = "No domains parsed";
+    setTimeout(() => button.innerText = "Run dig query", 1000);
+    return;
+  }
+
+  const types = ["A", "MX", "NS"];
+  const showRawA = document.getElementById("showRawDigA")?.checked ?? false;
+
+  try {
+    const res = await fetch("https://grasten.org/api/dig.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        domains: domains,
+        types: types,
+        trace: false
+      })
+    });
+
+    const data = await res.json();
+    console.log("dig results", data);
+
+    const text = Object.entries(data)
+      .map(([domain, recordMap]) => {
+        if (typeof recordMap === "string") {
+          return `=== ${domain} ===\n${recordMap}`;
+        }
+
+        const resultLines = [`=== ${domain} ===`];
+
+        // --- A Records (IPs)
+        if (recordMap["A"] && !showRawA) {
+          const ipMatches = Array.from(recordMap["A"].matchAll(/^.*\sIN\sA\s([\d.]+)$/gm));
+          const ips = ipMatches.map(m => m[1]);
+          resultLines.push(...ips);
+        } else if (recordMap["A"] && showRawA) {
+          resultLines.push(recordMap["A"]);
+        }
+
+        // --- NS Records
+        if (recordMap["NS"]) {
+          const lines = recordMap["NS"].split("\n");
+          const nsList = [];
+          const domainDot = domain.endsWith('.') ? domain : domain + '.';
+
+          let inAnswer = false;
+          for (const line of lines) {
+            if (line.includes("ANSWER SECTION:")) {
+              inAnswer = true;
+              continue;
+            }
+
+            if (inAnswer) {
+              if (line.trim() === "" || line.startsWith(";;")) break;
+
+              const parts = line.trim().split(/\s+/);
+              if (
+                parts.length >= 5 &&
+                parts[0].toLowerCase() === domainDot.toLowerCase() &&
+                parts[3].toUpperCase() === "NS"
+              ) {
+                nsList.push(parts[4].replace(/\.$/, ""));
+              }
+            }
+          }
+
+          resultLines.push(...nsList);
+        }
+
+        // --- Add blank line before MXs if any exist
+        const mxMatches = recordMap["MX"]
+          ? Array.from(recordMap["MX"].matchAll(/^.*\sIN\sMX\s\d+\s([a-z0-9.-]+)\.?$/gmi))
+          : [];
+
+        if (mxMatches.length) {
+          resultLines.push(""); // blank line before MXs
+          const mxs = mxMatches.map(m => m[1]);
+          resultLines.push(...mxs);
+        }
+
+        return resultLines.join("\n");
+      })
+      .join("\n\n");
+
+
+
+    document.getElementById("parserOutput").value = text;
+    document.getElementById("parserOutputCounter").innerText = `Number of dig results: ${domains.length}`;
+    button.innerText = "Run dig query";
+  } catch (err) {
+    console.error("dig query failed", err);
+    button.innerText = "Failed";
+    setTimeout(() => button.innerText = "Run dig query", 1000);
+  }
+}
+
+async function handleWhoisQuery() {
+  const button = document.getElementById("runWhois");
+  button.innerText = "Running...";
+
+  const domains = filteredLinksArray || [];
+  if (!domains.length) {
+    button.innerText = "No domains parsed";
+    setTimeout(() => button.innerText = "Run WHOIS Query", 1000);
+    return;
+  }
+
+  try {
+    const res = await fetch("https://grasten.org/api/whois.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targets: domains })
+    });
+
+    const data = await res.json();
+    console.log("WHOIS (RDAP) results", data);
+
+    // Format structured RDAP response into a readable string
+    const text = Object.entries(data)
+      .map(([domain, info]) => {
+        if (typeof info === "string") return `=== ${domain} ===\n${info}`;
+
+        // Extract registrar
+        let registrar = "N/A";
+        if (info.entities && Array.isArray(info.entities)) {
+          const registrarEntity = info.entities.find(entity =>
+            entity.roles?.includes("registrar") && entity.vcardArray
+          );
+
+          if (registrarEntity?.vcardArray?.[1]) {
+            const nameCard = registrarEntity.vcardArray[1].find(entry => entry[0] === "fn");
+            if (nameCard) registrar = nameCard[3];
+          }
+        }
+
+        // Extract creation date
+        let created = "N/A";
+        if (info.events && Array.isArray(info.events)) {
+          const creationEvent = info.events.find(event => event.eventAction === "registration");
+          if (creationEvent?.eventDate) {
+            created = new Date(creationEvent.eventDate).toISOString().split("T")[0];
+          }
+        }
+
+        const status = info.status?.join(", ") ?? "N/A";
+        const ns = info.nameservers?.map(ns => ns.ldhName).join(", ") ?? "N/A";
+
+        return `=== ${domain} ===
+Registrar: ${registrar}
+Created: ${created}
+Status: ${status}
+Nameservers: ${ns}`;
+      })
+      .join("\n\n");
+
+
+    document.getElementById("parserOutput").value = text;
+    document.getElementById("parserOutputCounter").innerText = `Number of WHOIS (RDAP) results: ${domains.length}`;
+    button.innerText = "Run WHOIS Query";
+  } catch (err) {
+    console.error("WHOIS query failed", err);
+    button.innerText = "Failed";
+    setTimeout(() => button.innerText = "Run WHOIS Query", 1000);
+  }
+}
 
 
 // --- EXPORT FUNCTIONS ---
@@ -252,51 +501,4 @@ export function findTargets(){
 }
 
 // Copies to clipboard command from the template
-export async function copyCommand(type){
-  let domains = getDomains("domain").filteredLinksArray;
-  let button = document.getElementById(`get${type}`);
-
-  let tempDomains = "", text = "";
-  if (type === "whois"){
-    try {
-      domains.forEach((domain, index) => {
-        let line = `${domain}${index === domains.length-1 ? "" : "\n"}`;
-        tempDomains += (line);
-      })
-
-      text = (`declare -a testStatus=(${tempDomains})
-for i in ` + '"${testStatus[@]}"' + `; do
-  echo -e "$i: $(whois "$i" | grep 'Status:')"
-echo    
-done`);
-
-      await navigator.clipboard.writeText(text);
-      button.innerHTML = "Copied!";
-      setTimeout(() => {
-        button.innerHTML = "Copy bulk Whois";
-      }, 1000);
-    }
-    catch (e) {console.log(e)}
-  } else if (type === "dig"){
-    try {
-      domains.forEach((domain, index) => {
-        let line = `${domain}${index === domains.length-1 ? "" : "\n"}`;
-        tempDomains += (line);
-      })
-
-      text = (`declare -a testStatus=(${tempDomains})
-for i in ` + '"${testStatus[@]}"' + `; do
-  echo "=== $i ==="
-  dig +trace +nodnssec "$i" | grep "$i" | tail -n 3
-  echo    
-done`);
-
-      await navigator.clipboard.writeText(text);
-      button.innerHTML = "Copied!";
-      setTimeout(() => {
-        button.innerHTML = `Copy bulk <br/> dig`;
-      }, 1000);
-    }
-    catch (e) {console.log(e)}
-  }
-}
+export { copyCommand, fetchDig, handleDigQuery, handleWhoisQuery };
