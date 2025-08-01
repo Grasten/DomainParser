@@ -238,18 +238,6 @@ done`);
   }
 }
 
-async function fetchDig(domain) {
-  const res = await fetch(`https://grasten.org/api/dig.php?domain=${domain}`);
-  const json = await res.json();
-  console.log(json.result);
-}
-
-async function fetchWhois(domain) {
-  const res = await fetch(`https://grasten.org/api/whois.php?domain=${domain}`);
-  const json = await res.json();
-  console.log(json.result);
-}
-
 async function handleDigQuery() {
   const button = document.getElementById("runDig");
   button.innerText = "Running...";
