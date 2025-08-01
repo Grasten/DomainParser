@@ -489,4 +489,4 @@ export function findTargets(){
 }
 
 // Copies to clipboard command from the template
-export { copyCommand, fetchDig, handleDigQuery, handleWhoisQuery };
+export { copyCommand, handleDigQuery, handleWhoisQuery };
