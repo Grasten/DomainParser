@@ -55,35 +55,45 @@ function App() {
 
               <button className="parser__topbar__buttons__parsebox__button parser__topbar__buttons__button" id="parseURLs"
                       onClick={()=> parseDomains("url")}>Parse URLs</button>
-            </div>
-
-            <div className="parser__topbar__buttons__openbox">
-              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="openLinks"
-                      onClick={openParsedDomains}>Open parsed links</button>
-
-              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="openTargets"
-                      onClick={findTargets}>Find possible targets</button>
-
-              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="runDig"
-                      onClick={handleDigQuery}>Run Dig Query</button>
-
-              <select id="recordTypeSelect">
-                <option value="A">A</option>
-                <option value="MX">MX</option>
-                <option value="NS">NS</option>
-                <option value="TXT">TXT</option>
-              </select>
-
-              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="runWhois"
-                      onClick={handleWhoisQuery}>Run WHOIS Query</button>
 
               <div className="parser__topbar__buttons__button parser__topbar__buttons__split
               parser__topbar__buttons__openbox__button" id="parseOpen">
                 <button className="parser__topbar__buttons__button" id="getwhois"
-                        onClick={() => copyCommand("whois")}>Copy bulk Whois</button>
+                        onClick={() => copyCommand("whois")}>Copy bulk Whois
+                </button>
                 <button className="parser__topbar__buttons__button" id="getdig"
-                        onClick={() => copyCommand("dig")}>Copy bulk {<br/>} dig</button>
+                        onClick={() => copyCommand("dig")}>Copy bulk {<br/>} dig
+                </button>
               </div>
+
+            </div>
+
+            <div className="parser__topbar__buttons__openbox">
+              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button"
+                      id="openLinks"
+                      onClick={openParsedDomains}>Open parsed links
+              </button>
+
+              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button"
+                      id="openTargets"
+                      onClick={findTargets}>Find possible targets
+              </button>
+
+              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="runDig"
+                      onClick={handleDigQuery}>Run Dig Query
+              </button>
+
+              <fieldset id="digTypeSelector" className="parser__options__checkModule">
+                <legend>dig types:</legend>
+                <label><input type="checkbox" value="A" defaultChecked /> A</label>
+                <label><input type="checkbox" value="MX" defaultChecked /> MX</label>
+                <label><input type="checkbox" value="NS" defaultChecked /> NS</label>
+              </fieldset>
+
+              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="runWhois"
+                      onClick={handleWhoisQuery}>Run WHOIS Query
+              </button>
+
             </div>
 
           </div>
@@ -93,10 +103,11 @@ function App() {
 
           <label htmlFor="checkboxSkip" className="parser__options__checkModule">
             Skip common domains (e.g. google.com):
-            <input defaultChecked="true" type="checkbox" className="parser__options__checkModule__checkbox" id="checkboxSkip"
-            onChange={() => {
-              let el = document.getElementById("checkboxSkipVis");
-              if (el.classList.contains("parser__options__checkModule__vis-checkbox--checked")) {
+            <input defaultChecked="true" type="checkbox" className="parser__options__checkModule__checkbox"
+                   id="checkboxSkip"
+                   onChange={() => {
+                     let el = document.getElementById("checkboxSkipVis");
+                     if (el.classList.contains("parser__options__checkModule__vis-checkbox--checked")) {
                 el.classList.remove("parser__options__checkModule__vis-checkbox--checked");
               } else {
                 el.classList.add("parser__options__checkModule__vis-checkbox--checked");

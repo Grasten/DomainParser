@@ -1,8 +1,9 @@
-import { parse } from 'tldts';
+import {parse} from 'tldts';
 import linkifyit from 'linkify-it';
-const linkify = linkifyit();
 import tlds from 'tlds';
 import SLTLDs from "./SLTLDs.jsx";
+
+const linkify = linkifyit();
 linkify.tlds(tlds)
 linkify.tlds(SLTLDs)
 
@@ -245,12 +246,55 @@ async function handleDigQuery() {
   const domains = filteredLinksArray || [];
   if (!domains.length) {
     button.innerText = "No domains parsed";
-    setTimeout(() => button.innerText = "Run dig query", 1000);
+    setTimeout(() => (button.innerText = "Run dig query"), 1000);
     return;
   }
 
-  const types = ["A", "MX", "NS"];
+  const selectedTypeElems = document.querySelectorAll(
+    "#digTypeSelector input[type='checkbox']:checked"
+  );
+  const types = Array.from(selectedTypeElems).map((input) => input.value);
   const showRawA = document.getElementById("showRawDigA")?.checked ?? false;
+  const enableIPWhois = document.getElementById("enableIPWhois")?.checked ?? true;
+
+  const whoisCache = new Map();
+
+  async function fetchIPWhois(ip) {
+    if (whoisCache.has(ip)) return whoisCache.get(ip);
+    try {
+      const res = await fetch(`https://grasten.org/api/whois.php`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targets: [ip] })
+      });
+      const json = await res.json();
+      const result = json[ip] || null;
+      whoisCache.set(ip, result);
+      return result;
+    } catch (e) {
+      whoisCache.set(ip, null);
+      console.error(e);
+      return null;
+    }
+  }
+
+  function getOrganizationName(info) {
+    if (!info || typeof info !== "object") return "Unknown org";
+
+    // 1. Top-level fields (fallbacks)
+    const basic =
+      info.organization ||
+      info.orgName ||
+      info.name ||
+      info.autonomousSystemOrganization;
+
+    // 2. Prioritize first "registrant" entity's vCard "fn"
+    const entity = info.entities?.find(e => e.roles?.includes("registrant"));
+    const fn = entity?.vcardArray?.[1]?.find(v => v[0] === "fn")?.[3];
+
+    return fn || basic || "Unknown org";
+  }
+
 
   try {
     const res = await fetch("https://grasten.org/api/dig.php", {
@@ -264,30 +308,45 @@ async function handleDigQuery() {
     });
 
     const data = await res.json();
-    console.log("dig results", data);
 
-    const text = Object.entries(data)
-      .map(([domain, recordMap]) => {
+    const entries = await Promise.all(
+      Object.entries(data).map(async ([domain, recordMap]) => {
         if (typeof recordMap === "string") {
           return `=== ${domain} ===\n${recordMap}`;
         }
 
         const resultLines = [`=== ${domain} ===`];
 
-        // --- A Records (IPs)
+        // --- A Records
         if (recordMap["A"] && !showRawA) {
           const ipMatches = Array.from(recordMap["A"].matchAll(/^.*\sIN\sA\s([\d.]+)$/gm));
-          const ips = ipMatches.map(m => m[1]);
-          resultLines.push(...ips);
+          const ips = ipMatches.map((m) => m[1]);
+
+          if (ips.length === 0) {
+            resultLines.push("No IPs found");
+          } else if (enableIPWhois) {
+            for (const ip of ips) {
+              const ipInfo = await fetchIPWhois(ip);
+              const org = getOrganizationName(ipInfo);
+              resultLines.push(`${ip} owned by ${org}`);
+            }
+          } else {
+            resultLines.push(...ips);
+          }
         } else if (recordMap["A"] && showRawA) {
           resultLines.push(recordMap["A"]);
+        }
+
+        // ⬇️ Add spacing only if NS is selected
+        if (types.includes("NS")) {
+          resultLines.push(""); // blank line before NS section
         }
 
         // --- NS Records
         if (recordMap["NS"]) {
           const lines = recordMap["NS"].split("\n");
           const nsList = [];
-          const domainDot = domain.endsWith('.') ? domain : domain + '.';
+          const domainDot = domain.endsWith(".") ? domain : domain + ".";
 
           let inAnswer = false;
           for (const line of lines) {
@@ -310,33 +369,40 @@ async function handleDigQuery() {
             }
           }
 
-          resultLines.push(...nsList);
+          if (nsList.length) {
+            resultLines.push(...nsList);
+          } else {
+            resultLines.push("No nameservers found");
+          }
         }
 
-        // --- Add blank line before MXs if any exist
+        // --- MX Records
         const mxMatches = recordMap["MX"]
           ? Array.from(recordMap["MX"].matchAll(/^.*\sIN\sMX\s\d+\s([a-z0-9.-]+)\.?$/gmi))
           : [];
 
-        if (mxMatches.length) {
-          resultLines.push(""); // blank line before MXs
-          const mxs = mxMatches.map(m => m[1]);
-          resultLines.push(...mxs);
+        if (types.includes("MX")) {
+          resultLines.push(""); // spacing before MX
+          if (mxMatches.length) {
+            const mxs = mxMatches.map((m) => m[1]);
+            resultLines.push("MX:");
+            resultLines.push(...mxs);
+          } else {
+            resultLines.push("No mail servers found");
+          }
         }
 
         return resultLines.join("\n");
       })
-      .join("\n\n");
+    );
 
-
-
-    document.getElementById("parserOutput").value = text;
+    document.getElementById("parserOutput").value = entries.join("\n\n");
     document.getElementById("parserOutputCounter").innerText = `Number of dig results: ${domains.length}`;
     button.innerText = "Run dig query";
   } catch (err) {
     console.error("dig query failed", err);
     button.innerText = "Failed";
-    setTimeout(() => button.innerText = "Run dig query", 1000);
+    setTimeout(() => (button.innerText = "Run dig query"), 1000);
   }
 }
 
@@ -362,7 +428,7 @@ async function handleWhoisQuery() {
     console.log("WHOIS (RDAP) results", data);
 
     // Format structured RDAP response into a readable string
-    const text = Object.entries(data)
+    document.getElementById("parserOutput").value = Object.entries(data)
       .map(([domain, info]) => {
         if (typeof info === "string") return `=== ${domain} ===\n${info}`;
 
@@ -398,9 +464,6 @@ Status: ${status}
 Nameservers: ${ns}`;
       })
       .join("\n\n");
-
-
-    document.getElementById("parserOutput").value = text;
     document.getElementById("parserOutputCounter").innerText = `Number of WHOIS (RDAP) results: ${domains.length}`;
     button.innerText = "Run WHOIS Query";
   } catch (err) {
