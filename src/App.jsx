@@ -1,7 +1,13 @@
 import './App.scss'
-import {parseDomains, openParsedDomains, findTargets, copyCommand, handleDigQuery, handleWhoisQuery} from "./utils.js";
+import {parseDomains, openParsedDomains, findTargets, copyCommand, handleFetch, toggleCheckbox} from "./utils.js";
 
 function App() {
+
+  let customSVG = (<svg height="100%" width="100%" version="1.1" id="Capa_1" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink"
+                   viewBox="0 0 32 32" xmlSpace="preserve">
+                    <polygon points="11.941,28.877 0,16.935 5.695,11.24 11.941,17.486 26.305,3.123 32,8.818"/>
+              </svg>);
+  const INCLUDE_OPTIONS = ['A', 'IP_ORG', 'NS', 'MX', 'WHOIS'];
 
   return (
     <>
@@ -45,6 +51,7 @@ function App() {
             </div>
 
           </div>
+
           <div className="parser__topbar__buttons">
             <div className="parser__topbar__buttons__parsebox">
               <button className="parser__topbar__buttons__parsebox__button parser__topbar__buttons__button" id="parseDomains"
@@ -79,28 +86,29 @@ function App() {
                       onClick={findTargets}>Find possible targets
               </button>
 
-              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="runDig"
-                      onClick={handleDigQuery}>Run Dig Query
+              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="fetchInfo"
+                      onClick={handleFetch}>Fetch domains info
               </button>
 
-              <fieldset id="digTypeSelector" className="parser__options__checkModule">
-                <legend>dig types:</legend>
-                <label><input type="checkbox" value="A" defaultChecked/> A</label>
-                <label><input type="checkbox" value="MX" defaultChecked/> MX</label>
-                <label><input type="checkbox" value="NS" defaultChecked/> NS</label>
+              <fieldset id="infoTypeSelector" className="parser__topbar__buttons__fieldset">
+                  {INCLUDE_OPTIONS.map((opt) => {
+                    const inputId = `checkbox${opt}`;
+                    const visId   = `checkbox${opt}Vis`;
+                    return (
+                      <label key={opt} htmlFor={inputId} className="parser__topbar__buttons__button">
+                        {opt}:
+                        <input
+                          defaultChecked
+                          type="checkbox"
+                          className="parser__options__checkModule__checkbox"
+                          id={inputId}
+                          onChange={() => toggleCheckbox(visId)}
+                        />
+                      </label>
+                    );
+                  })}
               </fieldset>
-
-              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="runWhois"
-                      onClick={handleWhoisQuery}>Run WHOIS Query
-              </button>
-
-              <label className="parser__options__checkModule">
-                MX IP owners:
-                <input type="checkbox" id="enableMXWhois"/>
-              </label>
-
             </div>
-
           </div>
         </div>
 
@@ -108,24 +116,12 @@ function App() {
 
           <label htmlFor="checkboxSkip" className="parser__options__checkModule">
             Skip common domains (e.g. google.com):
-            <input defaultChecked="true" type="checkbox" className="parser__options__checkModule__checkbox"
-                   id="checkboxSkip"
-                   onChange={() => {
-                     let el = document.getElementById("checkboxSkipVis");
-                     if (el.classList.contains("parser__options__checkModule__vis-checkbox--checked")) {
-                el.classList.remove("parser__options__checkModule__vis-checkbox--checked");
-              } else {
-                el.classList.add("parser__options__checkModule__vis-checkbox--checked");
-              }
-            }
-            }
+            <input defaultChecked="true" type="checkbox" className="parser__options__checkModule__checkbox" id="checkboxSkip"
+                   onChange={() => toggleCheckbox("checkboxSkipVis")}
             />
             <div className="parser__options__checkModule__vis-checkbox parser__options__checkModule__vis-checkbox--checked"
                  id="checkboxSkipVis">
-              <svg height="100%" width="100%" version="1.1" id="Capa_1" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink"
-                   viewBox="0 0 32 32" xmlSpace="preserve">
-                    <polygon points="11.941,28.877 0,16.935 5.695,11.24 11.941,17.486 26.305,3.123 32,8.818"/>
-              </svg>
+              {customSVG}
             </div>
           </label>
 
@@ -133,52 +129,6 @@ function App() {
             <p className="parser__options__filter__title">Filter:</p>
             <input type="text" className="parser__options__filter__input parser-fields" autoComplete="false" id="filterInput"/>
           </div>
-
-          {/*<div className="parser__options__general">
-            Reset input on
-            <label htmlFor="checkboxResetOnParse" className="parser__options__checkModule">
-              parse:
-              <input type="checkbox" className="parser__options__checkModule__checkbox" id="checkboxResetOnParse"
-                     onChange={() => {
-                       let el = document.getElementById("checkboxResetOnParseVis");
-                       if (el.classList.contains("parser__options__checkModule__vis-checkbox--checked")) {
-                         el.classList.remove("parser__options__checkModule__vis-checkbox--checked");
-                       } else {
-                         el.classList.add("parser__options__checkModule__vis-checkbox--checked");
-                       }
-                     }
-                     }
-              />
-              <div className="parser__options__checkModule__vis-checkbox"
-                   id="checkboxResetOnParseVis">
-                <svg height="100%" width="100%" version="1.1" id="Capa_1" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink"
-                     viewBox="0 0 32 32" xmlSpace="preserve">
-                  <polygon points="11.941,28.877 0,16.935 5.695,11.24 11.941,17.486 26.305,3.123 32,8.818"/>
-                </svg>
-              </div>
-            </label>
-            <label htmlFor="checkboxResetOnOpen" className="parser__options__checkModule">
-              open:
-              <input type="checkbox" className="parser__options__checkModule__checkbox" id="checkboxResetOnOpen"
-                     onChange={() => {
-                       let el = document.getElementById("checkboxResetOnOpenVis");
-                       if (el.classList.contains("parser__options__checkModule__vis-checkbox--checked")) {
-                         el.classList.remove("parser__options__checkModule__vis-checkbox--checked");
-                       } else {
-                         el.classList.add("parser__options__checkModule__vis-checkbox--checked");
-                       }
-                     }
-                     }
-              />
-              <div className="parser__options__checkModule__vis-checkbox"
-                   id="checkboxResetOnOpenVis">
-                <svg height="100%" width="100%" version="1.1" id="Capa_1" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink"
-                     viewBox="0 0 32 32" xmlSpace="preserve">
-                  <polygon points="11.941,28.877 0,16.935 5.695,11.24 11.941,17.486 26.305,3.123 32,8.818"/>
-                </svg>
-              </div>
-            </label>
-          </div>*/}
 
         </div>
 

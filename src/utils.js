@@ -244,262 +244,79 @@ done`);
   }
 }
 
-async function handleDigQuery() {
-  const button = document.getElementById("runDig");
-  button.innerText = "Running...";
+// utils.js — send a request to your PHP API using the global `filteredLinksArray`
+// Assumes `filteredLinksArray` is an array of domain strings (or empty).
+async function fetchDomainInfo(options = {}) {
 
-  const domains = filteredLinksArray || [];
-  if (!domains.length) {
-    button.innerText = "No domains parsed";
-    setTimeout(() => (button.innerText = "Run dig query"), 1000);
+  const {
+    endpoint = 'https://grasten.org/api/domaininfo.php',
+    include = ['A', 'IP_ORG', 'NS', 'MX', 'WHOIS'],
+    blacklists,                 // e.g. ['dbl','surbl']
+    debug = false,              // true to get _debug raw outputs
+  } = options;
+
+  // read domains from global/local variable
+  const src =
+    (typeof filteredLinksArray !== 'undefined' && Array.isArray(filteredLinksArray)) ? filteredLinksArray
+      : (typeof window !== 'undefined' && Array.isArray(window.filteredLinksArray)) ? window.filteredLinksArray
+        : [];
+
+  // clean + dedupe
+  const domains = [...new Set(src.map(s => String(s).trim()).filter(Boolean))];
+  if (domains.length === 0) return { ok: true, domains: {} };
+
+  // include BLACKLISTS if caller passed a list
+  const includeSet = new Set(include.map(s => String(s).toUpperCase()));
+  if (blacklists && !includeSet.has('BLACKLISTS')) includeSet.add('BLACKLISTS');
+
+  const body = {
+    domains,
+    include: Array.from(includeSet),
+    ...(blacklists ? { blacklists } : {}),
+    ...(debug ? { debug: true } : {}),
+  };
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+function handleFetch(){
+  let buttonText = document.getElementById("fetchInfo");
+  buttonText.innerText = "Running...";
+
+  if (filteredLinksArray.length === 0){
+    buttonText.innerText = "No links found";
+    setTimeout(() => {
+      buttonText.innerText = "Fetch domains info";
+    }, 1000)
     return;
   }
 
-  const selectedTypeElems = document.querySelectorAll(
-    "#digTypeSelector input[type='checkbox']:checked"
-  );
-  const types = Array.from(selectedTypeElems).map((input) => input.value);
-  const showRawA = document.getElementById("showRawDigA")?.checked ?? false;
-  const enableIPWhois = document.getElementById("enableIPWhois")?.checked ?? true;
-  const enableMXWhois = document.getElementById("enableMXWhois")?.checked ?? true;
+  let infoArray = fetchDomainInfo();
+  console.log(infoArray);
 
-  const whoisCache = new Map();
-
-  async function fetchIPWhois(ip) {
-    if (whoisCache.has(ip)) return whoisCache.get(ip);
-    try {
-      const res = await fetch(`https://grasten.org/api/whois.php`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targets: [ip] })
-      });
-      const json = await res.json();
-      const result = json[ip] || null;
-      whoisCache.set(ip, result);
-      return result;
-    } catch (e) {
-      whoisCache.set(ip, null);
-      console.error(e);
-      return null;
-    }
-  }
-
-  function getOrganizationName(info) {
-    if (!info || typeof info !== "object") return "Unknown org";
-
-    const entity = info.entities?.find((e) => e.roles?.includes("registrant"));
-    const fn = entity?.vcardArray?.[1]?.find((v) => v[0] === "fn")?.[3];
-
-    return (
-      fn ||
-      info.organization ||
-      info.orgName ||
-      info.name ||
-      info.autonomousSystemOrganization ||
-      "Unknown org"
-    );
-  }
-
-  try {
-    const res = await fetch("https://grasten.org/api/dig.php", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        domains: domains,
-        types: types,
-        trace: false
-      })
-    });
-
-    const data = await res.json();
-
-    const entries = await Promise.all(
-      Object.entries(data).map(async ([domain, recordMap]) => {
-        if (typeof recordMap === "string") {
-          return `=== ${domain} ===\n${recordMap}`;
-        }
-
-        const resultLines = [`=== ${domain} ===`];
-
-        // --- A Records
-        if (recordMap["A"] && !showRawA) {
-          const ipMatches = Array.from(recordMap["A"].matchAll(/^.*\sIN\sA\s([\d.]+)$/gm));
-          const ips = ipMatches.map((m) => m[1]);
-
-          if (ips.length === 0) {
-            resultLines.push("No IPs found");
-          } else if (enableIPWhois) {
-            for (const ip of ips) {
-              const ipInfo = await fetchIPWhois(ip);
-              const org = getOrganizationName(ipInfo);
-              resultLines.push(`${ip} owned by ${org}`);
-            }
-          } else {
-            resultLines.push(...ips);
-          }
-        } else if (recordMap["A"] && showRawA) {
-          resultLines.push(recordMap["A"]);
-        }
-
-        // spacing between A and NS
-        if (types.includes("NS")) {
-          resultLines.push("");
-        }
-
-        // --- NS Records
-        if (recordMap["NS"]) {
-          const lines = recordMap["NS"].split("\n");
-          const nsList = [];
-          const domainDot = domain.endsWith(".") ? domain : domain + ".";
-
-          let inAnswer = false;
-          for (const line of lines) {
-            if (line.includes("ANSWER SECTION:")) {
-              inAnswer = true;
-              continue;
-            }
-
-            if (inAnswer) {
-              if (line.trim() === "" || line.startsWith(";;")) break;
-
-              const parts = line.trim().split(/\s+/);
-              if (
-                parts.length >= 5 &&
-                parts[0].toLowerCase() === domainDot.toLowerCase() &&
-                parts[3].toUpperCase() === "NS"
-              ) {
-                nsList.push(parts[4].replace(/\.$/, ""));
-              }
-            }
-          }
-
-          if (nsList.length) {
-            resultLines.push(...nsList);
-          } else {
-            resultLines.push("No nameservers found");
-          }
-        }
-
-        // --- MX Records
-        const mxMatches = recordMap["MX"]
-          ? Array.from(recordMap["MX"].matchAll(/^.*\sIN\sMX\s\d+\s([a-z0-9.-]+)\.?$/gmi))
-          : [];
-
-        if (types.includes("MX")) {
-          resultLines.push(""); // spacing before MX
-          if (mxMatches.length) {
-            const mxs = mxMatches.map((m) => m[1]);
-            resultLines.push("MX:");
-            resultLines.push(...mxs);
-
-            if (enableMXWhois) {
-              for (const mx of mxs) {
-                try {
-                  const resolveRes = await fetch("https://grasten.org/api/dig.php", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ domains: [mx], types: ["A"], trace: false })
-                  });
-
-                  const resolveJson = await resolveRes.json();
-                  const aResult = resolveJson[mx];
-                  const matches = Array.from((aResult || "").matchAll(/^.*\sIN\sA\s([\d.]+)$/gm));
-                  const ipList = matches.map((m) => m[1]);
-
-                  for (const ip of ipList) {
-                    const ipInfo = await fetchIPWhois(ip);
-                    const org = getOrganizationName(ipInfo);
-                    resultLines.push(`→ ${mx} → ${ip} owned by ${org}`);
-                  }
-                } catch (e) {
-                  resultLines.push(`→ ${mx} → (lookup failed)`);
-                  console.error(e)
-                }
-              }
-            }
-          } else {
-            resultLines.push("No mail servers found");
-          }
-        }
-
-        return resultLines.join("\n");
-      })
-    );
-
-    document.getElementById("parserOutput").value = entries.join("\n\n");
-    document.getElementById("parserOutputCounter").innerText = `Number of dig results: ${domains.length}`;
-    button.innerText = "Run dig query";
-  } catch (err) {
-    console.error("dig query failed", err);
-    button.innerText = "Failed";
-    setTimeout(() => (button.innerText = "Run dig query"), 1000);
-  }
+  buttonText.innerText = "Fetch domains info";
 }
 
-async function handleWhoisQuery() {
-  const button = document.getElementById("runWhois");
-  button.innerText = "Running...";
+// Handles custom checkbox toggling
+function toggleCheckbox(id){
 
-  const domains = filteredLinksArray || [];
-  if (!domains.length) {
-    button.innerText = "No domains parsed";
-    setTimeout(() => (button.innerText = "Run whois query"), 1000);
-    return;
+  let el = document.getElementById(id);
+  if (el.classList.contains("parser__options__checkModule__vis-checkbox--checked")) {
+    console.log("removed");
+    el.classList.remove("parser__options__checkModule__vis-checkbox--checked");
+  } else {
+    console.log("added");
+    el.classList.add("parser__options__checkModule__vis-checkbox--checked");
   }
 
-  try {
-    const res = await fetch("https://grasten.org/api/whois.php", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ targets: domains })
-    });
-
-    const json = await res.json();
-    const entries = Object.entries(json).map(([domain, info]) => {
-      if (typeof info !== "object" || !info) return `${domain} - lookup failed`;
-
-      // 1. Get creation date
-      const creationDate = info.events?.find(e => e.eventAction === "registration")?.eventDate || "";
-      const formattedDate = creationDate
-        ? (() => {
-          const [year, month, day] = creationDate.slice(0, 10).split("-");
-          return `${parseInt(month, 10)}/${parseInt(day, 10)}/${year}`;
-        })()
-        : "";
-
-      // 2. Get registrar name
-      const registrarEntity = (info.entities || []).find(e => e.roles?.includes("registrar"));
-      const registrar = registrarEntity?.vcardArray?.[1]?.find(v => v[0] === "fn")?.[3] || "";
-
-      // 3. Get status
-      const status = Array.isArray(info.status) ? info.status.join(", ") : info.status || "";
-
-      // 4. Get nameservers
-      const nameservers = (info.nameservers || [])
-        .map(ns => ns.ldhName || ns.unicodeName || "")
-        .filter(Boolean)
-        .join(", ");
-
-      // Format lines
-      const lines = [];
-      lines.push(`${domain} - ${formattedDate}`);
-      if (registrar) lines.push(`Registrar: ${registrar}`);
-      if (status) lines.push(`Status: ${status}`);
-      if (nameservers) lines.push(`Nameservers: ${nameservers}`);
-
-      return lines.join("\n");
-    });
-
-    document.getElementById("parserOutput").value = entries.join("\n\n");
-    document.getElementById("parserOutputCounter").innerText = `Number of whois results: ${domains.length}`;
-    button.innerText = "Run whois query";
-  } catch (err) {
-    console.error("whois query failed", err);
-    button.innerText = "Failed";
-    setTimeout(() => (button.innerText = "Run whois query"), 1000);
-  }
 }
-
 
 // --- EXPORT FUNCTIONS ---
 
@@ -579,4 +396,4 @@ export function findTargets(){
 }
 
 // Copies to clipboard command from the template
-export { copyCommand, handleDigQuery, handleWhoisQuery };
+export { copyCommand, handleFetch, toggleCheckbox };
