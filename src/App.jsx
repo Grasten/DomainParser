@@ -85,14 +85,19 @@ function App() {
 
               <fieldset id="digTypeSelector" className="parser__options__checkModule">
                 <legend>dig types:</legend>
-                <label><input type="checkbox" value="A" defaultChecked /> A</label>
-                <label><input type="checkbox" value="MX" defaultChecked /> MX</label>
-                <label><input type="checkbox" value="NS" defaultChecked /> NS</label>
+                <label><input type="checkbox" value="A" defaultChecked/> A</label>
+                <label><input type="checkbox" value="MX" defaultChecked/> MX</label>
+                <label><input type="checkbox" value="NS" defaultChecked/> NS</label>
               </fieldset>
 
               <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="runWhois"
                       onClick={handleWhoisQuery}>Run WHOIS Query
               </button>
+
+              <label className="parser__options__checkModule">
+                MX IP owners:
+                <input type="checkbox" id="enableMXWhois"/>
+              </label>
 
             </div>
 

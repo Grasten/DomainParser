@@ -78,6 +78,11 @@ const skipDomains = [
   "googlegroups.com",
   "mailinblue.com",
   "comcast.net",
+  "cloudflare.com",
+  "openai.com",
+  "github.com",
+  "wikipedia.org",
+  "bbc.co.uk",
 ]
 
 // --- BASE FUNCTIONS ---
@@ -256,6 +261,7 @@ async function handleDigQuery() {
   const types = Array.from(selectedTypeElems).map((input) => input.value);
   const showRawA = document.getElementById("showRawDigA")?.checked ?? false;
   const enableIPWhois = document.getElementById("enableIPWhois")?.checked ?? true;
+  const enableMXWhois = document.getElementById("enableMXWhois")?.checked ?? true;
 
   const whoisCache = new Map();
 
@@ -281,20 +287,18 @@ async function handleDigQuery() {
   function getOrganizationName(info) {
     if (!info || typeof info !== "object") return "Unknown org";
 
-    // 1. Top-level fields (fallbacks)
-    const basic =
+    const entity = info.entities?.find((e) => e.roles?.includes("registrant"));
+    const fn = entity?.vcardArray?.[1]?.find((v) => v[0] === "fn")?.[3];
+
+    return (
+      fn ||
       info.organization ||
       info.orgName ||
       info.name ||
-      info.autonomousSystemOrganization;
-
-    // 2. Prioritize first "registrant" entity's vCard "fn"
-    const entity = info.entities?.find(e => e.roles?.includes("registrant"));
-    const fn = entity?.vcardArray?.[1]?.find(v => v[0] === "fn")?.[3];
-
-    return fn || basic || "Unknown org";
+      info.autonomousSystemOrganization ||
+      "Unknown org"
+    );
   }
-
 
   try {
     const res = await fetch("https://grasten.org/api/dig.php", {
@@ -337,9 +341,9 @@ async function handleDigQuery() {
           resultLines.push(recordMap["A"]);
         }
 
-        // ⬇️ Add spacing only if NS is selected
+        // spacing between A and NS
         if (types.includes("NS")) {
-          resultLines.push(""); // blank line before NS section
+          resultLines.push("");
         }
 
         // --- NS Records
@@ -387,6 +391,32 @@ async function handleDigQuery() {
             const mxs = mxMatches.map((m) => m[1]);
             resultLines.push("MX:");
             resultLines.push(...mxs);
+
+            if (enableMXWhois) {
+              for (const mx of mxs) {
+                try {
+                  const resolveRes = await fetch("https://grasten.org/api/dig.php", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ domains: [mx], types: ["A"], trace: false })
+                  });
+
+                  const resolveJson = await resolveRes.json();
+                  const aResult = resolveJson[mx];
+                  const matches = Array.from((aResult || "").matchAll(/^.*\sIN\sA\s([\d.]+)$/gm));
+                  const ipList = matches.map((m) => m[1]);
+
+                  for (const ip of ipList) {
+                    const ipInfo = await fetchIPWhois(ip);
+                    const org = getOrganizationName(ipInfo);
+                    resultLines.push(`→ ${mx} → ${ip} owned by ${org}`);
+                  }
+                } catch (e) {
+                  resultLines.push(`→ ${mx} → (lookup failed)`);
+                  console.error(e)
+                }
+              }
+            }
           } else {
             resultLines.push("No mail servers found");
           }
@@ -413,7 +443,7 @@ async function handleWhoisQuery() {
   const domains = filteredLinksArray || [];
   if (!domains.length) {
     button.innerText = "No domains parsed";
-    setTimeout(() => button.innerText = "Run WHOIS Query", 1000);
+    setTimeout(() => (button.innerText = "Run whois query"), 1000);
     return;
   }
 
@@ -424,52 +454,49 @@ async function handleWhoisQuery() {
       body: JSON.stringify({ targets: domains })
     });
 
-    const data = await res.json();
-    console.log("WHOIS (RDAP) results", data);
+    const json = await res.json();
+    const entries = Object.entries(json).map(([domain, info]) => {
+      if (typeof info !== "object" || !info) return `${domain} - lookup failed`;
 
-    // Format structured RDAP response into a readable string
-    document.getElementById("parserOutput").value = Object.entries(data)
-      .map(([domain, info]) => {
-        if (typeof info === "string") return `=== ${domain} ===\n${info}`;
+      // 1. Get creation date
+      const creationDate = info.events?.find(e => e.eventAction === "registration")?.eventDate || "";
+      const formattedDate = creationDate
+        ? (() => {
+          const [year, month, day] = creationDate.slice(0, 10).split("-");
+          return `${parseInt(month, 10)}/${parseInt(day, 10)}/${year}`;
+        })()
+        : "";
 
-        // Extract registrar
-        let registrar = "N/A";
-        if (info.entities && Array.isArray(info.entities)) {
-          const registrarEntity = info.entities.find(entity =>
-            entity.roles?.includes("registrar") && entity.vcardArray
-          );
+      // 2. Get registrar name
+      const registrarEntity = (info.entities || []).find(e => e.roles?.includes("registrar"));
+      const registrar = registrarEntity?.vcardArray?.[1]?.find(v => v[0] === "fn")?.[3] || "";
 
-          if (registrarEntity?.vcardArray?.[1]) {
-            const nameCard = registrarEntity.vcardArray[1].find(entry => entry[0] === "fn");
-            if (nameCard) registrar = nameCard[3];
-          }
-        }
+      // 3. Get status
+      const status = Array.isArray(info.status) ? info.status.join(", ") : info.status || "";
 
-        // Extract creation date
-        let created = "N/A";
-        if (info.events && Array.isArray(info.events)) {
-          const creationEvent = info.events.find(event => event.eventAction === "registration");
-          if (creationEvent?.eventDate) {
-            created = new Date(creationEvent.eventDate).toISOString().split("T")[0];
-          }
-        }
+      // 4. Get nameservers
+      const nameservers = (info.nameservers || [])
+        .map(ns => ns.ldhName || ns.unicodeName || "")
+        .filter(Boolean)
+        .join(", ");
 
-        const status = info.status?.join(", ") ?? "N/A";
-        const ns = info.nameservers?.map(ns => ns.ldhName).join(", ") ?? "N/A";
+      // Format lines
+      const lines = [];
+      lines.push(`${domain} - ${formattedDate}`);
+      if (registrar) lines.push(`Registrar: ${registrar}`);
+      if (status) lines.push(`Status: ${status}`);
+      if (nameservers) lines.push(`Nameservers: ${nameservers}`);
 
-        return `=== ${domain} ===
-Registrar: ${registrar}
-Created: ${created}
-Status: ${status}
-Nameservers: ${ns}`;
-      })
-      .join("\n\n");
-    document.getElementById("parserOutputCounter").innerText = `Number of WHOIS (RDAP) results: ${domains.length}`;
-    button.innerText = "Run WHOIS Query";
+      return lines.join("\n");
+    });
+
+    document.getElementById("parserOutput").value = entries.join("\n\n");
+    document.getElementById("parserOutputCounter").innerText = `Number of whois results: ${domains.length}`;
+    button.innerText = "Run whois query";
   } catch (err) {
-    console.error("WHOIS query failed", err);
+    console.error("whois query failed", err);
     button.innerText = "Failed";
-    setTimeout(() => button.innerText = "Run WHOIS Query", 1000);
+    setTimeout(() => (button.innerText = "Run whois query"), 1000);
   }
 }
 
