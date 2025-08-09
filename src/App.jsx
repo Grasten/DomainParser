@@ -3,7 +3,7 @@ import {parseDomains, openParsedDomains, findTargets, copyCommand, handleFetch, 
 
 function App() {
 
-  let customSVG = (<svg height="100%" width="100%" version="1.1" id="Capa_1" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink"
+  let customCheckboxSVG = (<svg height="100%" width="100%" version="1.1" id="Capa_1" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink"
                    viewBox="0 0 32 32" xmlSpace="preserve">
                     <polygon points="11.941,28.877 0,16.935 5.695,11.24 11.941,17.486 26.305,3.123 32,8.818"/>
               </svg>);
@@ -51,7 +51,6 @@ function App() {
             </div>
 
           </div>
-
           <div className="parser__topbar__buttons">
             <div className="parser__topbar__buttons__parsebox">
               <button className="parser__topbar__buttons__parsebox__button parser__topbar__buttons__button" id="parseDomains"
@@ -91,22 +90,28 @@ function App() {
               </button>
 
               <fieldset id="infoTypeSelector" className="parser__topbar__buttons__fieldset">
-                  {INCLUDE_OPTIONS.map((opt) => {
-                    const inputId = `checkbox${opt}`;
-                    const visId   = `checkbox${opt}Vis`;
-                    return (
-                      <label key={opt} htmlFor={inputId} className="parser__topbar__buttons__button">
-                        {opt}:
-                        <input
-                          defaultChecked
-                          type="checkbox"
-                          className="parser__options__checkModule__checkbox"
-                          id={inputId}
-                          onChange={() => toggleCheckbox(visId)}
-                        />
-                      </label>
-                    );
-                  })}
+                {INCLUDE_OPTIONS.map((opt) => {
+                  const inputId = `checkbox${opt}`;
+                  const visId   = `checkbox${opt}Vis`;
+                  return (
+                    <label key={opt} htmlFor={inputId} className="parser__options__checkModule">
+                      {opt}:
+                      <input
+                        type="checkbox"
+                        defaultChecked
+                        className="parser__options__checkModule__checkbox"
+                        id={inputId}
+                        onChange={(e) => toggleCheckbox(visId, e.target.checked)}
+                      />
+                      <div
+                        className="parser__options__checkModule__vis-checkbox parser__options__checkModule__vis-checkbox--checked"
+                        id={visId}
+                      >
+                        {customCheckboxSVG}
+                      </div>
+                    </label>
+                  );
+                })}
               </fieldset>
             </div>
           </div>
@@ -121,7 +126,7 @@ function App() {
             />
             <div className="parser__options__checkModule__vis-checkbox parser__options__checkModule__vis-checkbox--checked"
                  id="checkboxSkipVis">
-              {customSVG}
+              {customCheckboxSVG}
             </div>
           </label>
 
