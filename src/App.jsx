@@ -7,7 +7,7 @@ function App() {
                    viewBox="0 0 32 32" xmlSpace="preserve">
                     <polygon points="11.941,28.877 0,16.935 5.695,11.24 11.941,17.486 26.305,3.123 32,8.818"/>
               </svg>);
-  const INCLUDE_OPTIONS = ['A', 'IP_ORG', 'NS', 'MX', 'WHOIS'];
+  const INCLUDE_OPTIONS = ['Reg_date', 'IP', 'IP_org', 'NS', 'MX', 'MX_org', 'IsSusp', 'Regist'];
 
   return (
     <>
@@ -85,23 +85,25 @@ function App() {
                       onClick={findTargets}>Find possible targets
               </button>
 
-              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button" id="fetchInfo"
+              <button className="parser__topbar__buttons__button parser__topbar__buttons__openbox__button"
+                      id="fetchInfo"
                       onClick={handleFetch}>Fetch domains info
               </button>
 
               <fieldset id="infoTypeSelector" className="parser__topbar__buttons__fieldset">
                 {INCLUDE_OPTIONS.map((opt) => {
                   const inputId = `checkbox${opt}`;
-                  const visId   = `checkbox${opt}Vis`;
+                  const visId = `checkbox${opt}Vis`;
                   return (
                     <label key={opt} htmlFor={inputId} className="parser__options__checkModule">
                       {opt}:
                       <input
                         type="checkbox"
                         defaultChecked
-                        className="parser__options__checkModule__checkbox"
-                        id={inputId}
-                        onChange={(e) => toggleCheckbox(visId, e.target.checked)}
+                      value={opt}
+                      className="parser__options__checkModule__checkbox"
+                      id={inputId}
+                      onChange={(e) => toggleCheckbox(visId, e.target.checked)}
                       />
                       <div
                         className="parser__options__checkModule__vis-checkbox parser__options__checkModule__vis-checkbox--checked"
@@ -121,11 +123,13 @@ function App() {
 
           <label htmlFor="checkboxSkip" className="parser__options__checkModule">
             Skip common domains (e.g. google.com):
-            <input defaultChecked="true" type="checkbox" className="parser__options__checkModule__checkbox" id="checkboxSkip"
+            <input defaultChecked="true" type="checkbox" className="parser__options__checkModule__checkbox"
+                   id="checkboxSkip"
                    onChange={() => toggleCheckbox("checkboxSkipVis")}
             />
-            <div className="parser__options__checkModule__vis-checkbox parser__options__checkModule__vis-checkbox--checked"
-                 id="checkboxSkipVis">
+            <div
+              className="parser__options__checkModule__vis-checkbox parser__options__checkModule__vis-checkbox--checked"
+              id="checkboxSkipVis">
               {customCheckboxSVG}
             </div>
           </label>

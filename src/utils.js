@@ -85,6 +85,77 @@ const skipDomains = [
   "bbc.co.uk",
 ]
 
+// --- HELPERS ---
+
+export function enforceIpOrgDependency() {
+  const a  = document.getElementById('checkboxA')?.checked ?? false;
+  const mx = document.getElementById('checkboxMX')?.checked ?? false;
+
+  const ip     = document.getElementById('checkboxIP_ORG');
+  const ipVis  = document.getElementById('checkboxIP_ORGVis');
+  const checkedCls  = 'parser__options__checkModule__vis-checkbox--checked';
+  const disabledCls = 'is-disabled'; // optional; add CSS if you want styling
+
+  const shouldDisable = !(a || mx);
+
+  if (!ip) return;
+
+  ip.disabled = shouldDisable;
+
+  if (shouldDisable) {
+    ip.checked = false;                 // uncheck if not allowed
+    if (ipVis) ipVis.classList.remove(checkedCls);
+    if (ipVis) ipVis.classList.add(disabledCls);
+  } else {
+    if (ipVis) ipVis.classList.remove(disabledCls);
+  }
+}
+
+// Read checked boxes as UI labels: 'Reg_date','IP','IP_org','NS','MX','MX_org','IsSusp','Regist'
+function getSelectedUiOptions() {
+  const fs = document.getElementById('infoTypeSelector');
+  if (!fs) return [];
+  return Array.from(fs.querySelectorAll('input[type="checkbox"]'))
+    .filter(el => el.checked && !el.disabled)
+    .map(el => el.value || el.id.replace(/^checkbox/, ''));
+}
+
+// Map UI labels -> API include flags expected by backend
+function buildApiIncludeFromUi(ui) {
+  const api = new Set();
+
+  // WHOIS-derived fields
+  if (ui.some(x => ['Reg_date','IsSusp','Regist'].includes(x))) api.add('WHOIS');
+
+  // IP/A
+  if (ui.includes('IP')) api.add('A');
+
+  // NS
+  if (ui.includes('NS')) api.add('NS');
+
+  // MX (+ extras)
+  if (ui.includes('MX')) api.add('MX');
+
+  // IP org lookups (covers A IPs and MX IPs when MX is requested)
+  if (ui.includes('IP_org')) { api.add('A'); api.add('IP_ORG'); }
+  if (ui.includes('MX_org')) { api.add('MX'); api.add('IP_ORG'); }
+
+  return Array.from(api);
+}
+
+
+// Handles custom checkbox toggling
+function toggleCheckbox(id, checked){
+  const el = document.getElementById(id);
+  if (!el) return;
+  const cls = "parser__options__checkModule__vis-checkbox--checked";
+  if (typeof checked === 'boolean') {
+    el.classList.toggle(cls, checked);
+  } else {
+    el.classList.toggle(cls);
+  }
+}
+
 // --- BASE FUNCTIONS ---
 
 // Returns input text with basic parsing (brackets, protocols)
@@ -286,34 +357,141 @@ async function fetchDomainInfo(options = {}) {
   return res.json();
 }
 
-function handleFetch(){
-  let buttonText = document.getElementById("fetchInfo");
-  buttonText.innerText = "Running...";
+// Pretty printer that shows ONLY the lines for selected UI options.
+function formatDomainInfoPretty(api, uiSelected = [], order) {
+  const domains = (api && api.domains) || {};
+  const want = new Set(uiSelected || []);
+  const keys = order
+    ? Array.from(new Set(order)).filter(d => d in domains)
+    : Object.keys(domains).sort((a,b)=>a.localeCompare(b));
+
+  const iso10 = (s) => {
+    if (!s) return '—';
+    const m = String(s).match(/^\d{4}-\d{2}-\d{2}/);
+    if (m) return m[0];
+    const d = new Date(s);
+    return isNaN(d) ? String(s) : d.toISOString().slice(0,10);
+  };
+
+  const holdSummary = (statuses = []) => {
+    const lower = statuses.map(x => String(x).toLowerCase());
+    const holds = [];
+    if (lower.some(s => s.includes('clienthold'))) holds.push('clientHold');
+    if (lower.some(s => s.includes('serverhold'))) holds.push('serverHold');
+    return holds;
+  };
+
+  const out = [];
+
+  for (const d of keys) {
+    const row = domains[d] || {};
+    const block = [];
+
+    // Always show domain; append " - Reg_date" only if selected
+    if (want.has('Reg_date')) {
+      block.push(`${d} - ${iso10(row.whois?.creation_date)}`);
+    } else {
+      block.push(d);
+    }
+
+    // IP / IP_org line (only if IP or IP_org selected)
+    if (want.has('IP') || want.has('IP_org')) {
+      const ips = Array.isArray(row.a) ? row.a : [];
+      const owners = Array.isArray(row.ip_owner) ? row.ip_owner : [];
+      let line = '—';
+
+      if (want.has('IP_org') && owners.length) {
+        line = owners
+          .map(io => `${io.ip}${io.org ? ` owned by ${io.org}` : ' owned by unknown org'}`)
+          .join('; ');
+      } else if (want.has('IP') && ips.length) {
+        line = ips.join(', ');
+      } else if (want.has('IP') && !ips.length && owners.length) {
+        line = owners.map(io => io.ip).join(', ');
+      }
+      block.push(line);
+    }
+
+    // NS
+    if (want.has('NS')) {
+      block.push((row.ns && row.ns.length) ? row.ns.join(', ') : '—');
+    }
+
+    // MX (header + one line per record)
+    if (want.has('MX')) {
+      const mx = Array.isArray(row.mx) ? row.mx : [];
+      block.push('MX:');
+      if (mx.length) {
+        for (const m of mx) {
+          const one = `${m.priority ?? ''} ${m.host}`.trim() +
+            (m.ips?.length ? ` [${m.ips.join(', ')}]` : '');
+          block.push(one);
+        }
+      } else {
+        block.push('—');
+      }
+    }
+
+    // MX_org
+    if (want.has('MX_org')) {
+      const mx = Array.isArray(row.mx) ? row.mx : [];
+      if (mx.length) {
+        const parts = [];
+        for (const m of mx) {
+          const orgs = Array.isArray(m.ip_orgs) ? m.ip_orgs : [];
+          if (orgs.length) {
+            parts.push(
+              `${m.host}: ` +
+              orgs.map(io => `${io.ip}${io.org ? ` owned by ${io.org}` : ' owned by unknown org'}`).join('; ')
+            );
+          }
+        }
+        block.push(parts.length ? parts.join('\n') : '—');
+      } else {
+        block.push('—');
+      }
+    }
+
+    // IsSusp
+    if (want.has('IsSusp')) {
+      const holds = holdSummary(row.whois?.statuses || []);
+      block.push(holds.length ? `Suspended: ${holds.join(', ')}` : 'Not suspended');
+    }
+
+    // Regist (Registrar)
+    if (want.has('Regist')) {
+      block.push(`${row.whois?.registrar || '—'}`);
+    }
+
+    out.push(block.join('\n'));
+  }
+
+  return out.join('\n\n');
+}
+
+async function handleFetch(){
+  const btn = document.getElementById("fetchInfo");
+  btn.innerText = "Running...";
 
   if (filteredLinksArray.length === 0){
-    buttonText.innerText = "No links found";
-    setTimeout(() => {
-      buttonText.innerText = "Fetch domains info";
-    }, 1000)
+    btn.innerText = "No links found";
+    setTimeout(() => { btn.innerText = "Fetch domains info"; }, 1000);
     return;
   }
 
-  let infoArray = fetchDomainInfo();
-  console.log(infoArray);
+  try {
+    const ui = getSelectedUiOptions();
+    const include = buildApiIncludeFromUi(ui);
+    const data = await fetchDomainInfo({ include });
 
-  buttonText.innerText = "Fetch domains info";
-}
+    document.getElementById('parserOutput').value = formatDomainInfoPretty(data, ui, filteredLinksArray);
+    document.getElementById('parserOutputCounter').innerText =
+      `Domains returned: ${Object.keys(data.domains || {}).length}`;
 
-// Handles custom checkbox toggling
-function toggleCheckbox(id){
-
-  let el = document.getElementById(id);
-  if (el.classList.contains("parser__options__checkModule__vis-checkbox--checked")) {
-    console.log("removed");
-    el.classList.remove("parser__options__checkModule__vis-checkbox--checked");
-  } else {
-    console.log("added");
-    el.classList.add("parser__options__checkModule__vis-checkbox--checked");
+  } catch (e) {
+    console.error(e);
+  } finally {
+    btn.innerText = "Fetch domains info";
   }
 
 }
