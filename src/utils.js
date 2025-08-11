@@ -1,7 +1,7 @@
 import {parse} from 'tldts';
 import linkifyit from 'linkify-it';
 import tlds from 'tlds';
-import SLTLDs from "./SLTLDs.jsx";
+import { SLTLDs, skipDomains } from "./domainLists.jsx";
 
 const linkify = linkifyit();
 linkify.tlds(tlds)
@@ -14,78 +14,30 @@ const regDomains = /(?<=^|[^a-z0-9])((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[^a-z0-9]|$)/
 const regHxxps = /hxxps\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
 const regHxxp = /hxxp\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
 const regSemicolon = / ?\[:] ?/gi;
-const skipDomains = [
-  "gmail.com",
-  "yahoo.com",
-  "hotmail.com",
-  "outlook.com",
-  "icloud.com",
-  "mail.com",
-  "aol.com",
-  "protonmail.com",
-  "zoho.com",
-  "yandex.com",
-  "gmx.com",
-  "me.com",
-  "tutanota.com",
-  "live.com",
-  "fastmail.com",
-  "hushmail.com",
-  "qq.com",
-  "naver.com",
-  "163.com",
-  "rediffmail.com",
-  "jellyfish.systems",
-  "google.com",
-  "namecheap.com",
-  "1e100.net",
-  "gappssmtp.com",
-  "microsoft.com",
-  "windows.net",
-  "apple.com",
-  "w3.org",
-  "stratoserver.net",
-  "radix.support",
-  "freshemail.io",
-  "freshdesk.com",
-  "icann.org",
-  "zohomail.com",
-  "scamsurvivors.com",
-  "zerofoxtakedowns.com",
-  "takedownreporting.com",
-  "wipo.int",
-  "zerofox.com",
-  "namecheaphosting.com",
-  "office365.com",
-  "enom.com",
-  "mxrecord.io",
-  "acidtool.com",
-  "yahoo.co.uk",
-  "engagement.ai",
-  "withheldforprivacy.com",
-  "legalmail.it",
-  "nic.art",
-  "mailgun.net",
-  "fonts.googleapis.com",
-  "gstatic.com",
-  "amazonaws.com",
-  "facebook.com",
-  "linkedin.com",
-  "tiktok.com",
-  "salesforce.com",
-  "registrar-servers.com",
-  "spamcop.net",
-  "googlegroups.com",
-  "mailinblue.com",
-  "comcast.net",
-  "cloudflare.com",
-  "openai.com",
-  "github.com",
-  "wikipedia.org",
-  "bbc.co.uk",
-]
 
 // --- HELPERS ---
+
+// Keep only domains where predicate(row, domain) === true
+export function filterApiDomains(api, predicate) {
+  const out = { ...api, domains: {} };
+  if (!api || !api.domains) return out;
+  for (const [domain, row] of Object.entries(api.domains)) {
+    try {
+      if (predicate(row, domain)) out.domains[domain] = row;
+    } catch (_) {}
+  }
+  return out;
+}
+
+// Convenience: filter by registrar substring (case-insensitive)
+export function filterByRegistrar(api, name) {
+  const q = String(name || '').toLowerCase();
+  if (!q) return api;
+  return filterApiDomains(api, (row) =>
+    String(row?.whois?.registrar || '').toLowerCase().includes(q)
+  );
+}
+
 
 export function enforceIpOrgDependency() {
   const a  = document.getElementById('checkboxA')?.checked ?? false;
@@ -143,6 +95,16 @@ function buildApiIncludeFromUi(ui) {
   return Array.from(api);
 }
 
+const toUSDate = (s) => {
+  if (!s) return '—';
+  // prefer YYYY-MM-DD prefix if present (avoids TZ shifts)
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${+m[2]}/${+m[3]}/${m[1]}`; // M/D/YYYY (no leading zeros)
+
+  // fallback: parse whatever it is
+  const d = new Date(s);
+  return isNaN(d) ? String(s) : `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`;
+};
 
 // Handles custom checkbox toggling
 function toggleCheckbox(id, checked){
@@ -316,7 +278,6 @@ done`);
 }
 
 // utils.js — send a request to your PHP API using the global `filteredLinksArray`
-// Assumes `filteredLinksArray` is an array of domain strings (or empty).
 async function fetchDomainInfo(options = {}) {
 
   const {
@@ -365,19 +326,11 @@ function formatDomainInfoPretty(api, uiSelected = [], order) {
     ? Array.from(new Set(order)).filter(d => d in domains)
     : Object.keys(domains).sort((a,b)=>a.localeCompare(b));
 
-  const iso10 = (s) => {
-    if (!s) return '—';
-    const m = String(s).match(/^\d{4}-\d{2}-\d{2}/);
-    if (m) return m[0];
-    const d = new Date(s);
-    return isNaN(d) ? String(s) : d.toISOString().slice(0,10);
-  };
-
   const holdSummary = (statuses = []) => {
     const lower = statuses.map(x => String(x).toLowerCase());
     const holds = [];
-    if (lower.some(s => s.includes('clienthold'))) holds.push('clientHold');
-    if (lower.some(s => s.includes('serverhold'))) holds.push('serverHold');
+    if (lower.some(s => s.includes('client hold'))) holds.push('clientHold');
+    if (lower.some(s => s.includes('server hold'))) holds.push('serverHold');
     return holds;
   };
 
@@ -389,7 +342,7 @@ function formatDomainInfoPretty(api, uiSelected = [], order) {
 
     // Always show domain; append " - Reg_date" only if selected
     if (want.has('Reg_date')) {
-      block.push(`${d} - ${iso10(row.whois?.creation_date)}`);
+      block.push(`${d} - ${toUSDate(row.whois?.creation_date)}`);
     } else {
       block.push(d);
     }
@@ -482,9 +435,17 @@ async function handleFetch(){
   try {
     const ui = getSelectedUiOptions();
     const include = buildApiIncludeFromUi(ui);
-    const data = await fetchDomainInfo({ include });
 
-    document.getElementById('parserOutput').value = formatDomainInfoPretty(data, ui, filteredLinksArray);
+    let data = await fetchDomainInfo({ include });
+
+// Example: keep only domains registered with NameCheap, Inc.
+    //data = filterByRegistrar(data, 'NameCheap, Inc.');
+
+// Preserve your original order but only for kept domains
+    const order = filteredLinksArray.filter(d => data.domains?.[d]);
+
+    const text = formatDomainInfoPretty(data, ui, order);
+    document.getElementById('parserOutput').value = text;
     document.getElementById('parserOutputCounter').innerText =
       `Domains returned: ${Object.keys(data.domains || {}).length}`;
 

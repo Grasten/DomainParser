@@ -227,6 +227,7 @@ button {
                 display: grid;
                 color: rgba($c-yellow, 0.9);
                 grid-template-columns: 1fr;
+                grid-gap: 10px;
                 &>label{
                     font-size: .9rem;
                 }
