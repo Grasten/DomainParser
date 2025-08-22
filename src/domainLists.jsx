@@ -8196,6 +8196,8 @@ export const SLTLDs = ["com.ac",
   "zone.id",]
 
 export const skipDomains = [
+  "spamhaus.org",
+  "surbl.org",
   "wikimedia.org",
   "storage.googleapis.com",
   "imgur.com",
@@ -8221,7 +8223,6 @@ export const skipDomains = [
   "fbi.gov",
   "meta.com",
   "ftc.gov",
-  "pastebin.com",
   "malwaretips.com",
   "amazon.com",
   "gmail.com",

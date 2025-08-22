@@ -7,7 +7,7 @@ function App() {
                    viewBox="0 0 32 32" xmlSpace="preserve">
                     <polygon points="11.941,28.877 0,16.935 5.695,11.24 11.941,17.486 26.305,3.123 32,8.818"/>
               </svg>);
-  const INCLUDE_OPTIONS = ['Reg_date', 'IP', 'IP_org', 'NS', 'MX', 'MX_org', 'IsSusp', 'Regist'];
+  const INCLUDE_OPTIONS = ['Reg_date', 'IP', 'IP_org', 'NS', 'MX', 'MX_org', 'IsSusp', 'Regist', 'HasContent'];
 
   return (
     <>
