@@ -65,6 +65,14 @@ const WHOIS_MAX_BYTES   = 200000;
 
 const DEBUG_RAW_LIMIT   = 4000; // limit raw text in debug payload
 
+const WHOIS_TLD_MAP = [
+  'gg' => 'whois.gg',
+  'je' => 'whois.je',
+  'me' => 'whois.nic.me',
+  'io' => 'whois.nic.io',
+];
+
+
 /////////////////////////////
 // Helpers: IO/JSON/IDN/date
 /////////////////////////////
@@ -223,17 +231,43 @@ function dig_mx(string $domain): array {
 /////////////////////////////
 // WHOIS / RDAP helpers
 /////////////////////////////
+
+function whois_tld_referral(string $tld, int $timeout = 6): ?string {
+  if ($tld === '') return null;
+  $txt = whois_port43('whois.iana.org', $tld, $timeout);
+  if ($txt === '') return null;
+  // IANA uses either "whois:" or "refer:" for the referral field
+  if (preg_match('~^\s*(?:whois|refer)\s*:\s*(\S+)~im', $txt, $m)) {
+    return trim($m[1]);
+  }
+  return null;
+}
+
 function whois_text_domain(string $domain): string {
+  // 1) Try local whois binary first
   if (is_proc_open_enabled()) {
     $cmd = sprintf('%s -H %s', WHOIS_BIN, escapeshellarg($domain));
     $res = run_cmd($cmd, WHOIS_TIMEOUT_SEC, WHOIS_MAX_BYTES);
     $txt = trim(($res['out'] ?: $res['err']) ?? '');
     $bad = ($res['exit'] !== 0) || ($txt === '') || stripos($txt, 'not found') !== false;
-    if (!$bad) {
-      return substr($txt, 0, WHOIS_MAX_BYTES);
-    }
+    if (!$bad) return substr($txt, 0, WHOIS_MAX_BYTES);
   }
-  // Fallback: RDAP textified → will include "Status: serverHold" lines
+
+  // 2) Port-43 by known TLD map
+  $tld = strtolower(substr(strrchr($domain, '.'), 1) ?: '');
+  if ($tld && !empty(WHOIS_TLD_MAP[$tld])) {
+    $txt = whois_port43(WHOIS_TLD_MAP[$tld], $domain);
+    if (trim($txt) !== '') return substr($txt, 0, WHOIS_MAX_BYTES);
+  }
+
+  // 3) Generic IANA referral (works for many TLDs if not in the map)
+  $ref = whois_tld_referral($tld);
+  if ($ref) {
+    $txt = whois_port43($ref, $domain);
+    if (trim($txt) !== '') return substr($txt, 0, WHOIS_MAX_BYTES);
+  }
+
+  // 4) RDAP fallback (some ccTLDs don’t have RDAP; still worth trying)
   $rd = rdap_domain($domain);
   return $rd ? rdap_domain_textify($rd) : '';
 }
@@ -249,8 +283,22 @@ function whois_text_ip(string $ip): string {
   return $rd ? rdap_ip_textify($rd) : '';
 }
 function normalize_date(string $s): ?string {
-  $c = is_array($s) ? $s : [$s];
-  foreach ($c as $one) { $dt = date_create(trim($one)); if ($dt) return $dt->format(DATE_ATOM); }
+  $candidates = is_array($s) ? $s : [$s];
+  foreach ($candidates as $one) {
+    $one = trim((string)$one);
+    if ($one === '') continue;
+
+    // remove ordinal suffixes: 1st/2nd/3rd/4th -> 1/2/3/4
+    $one = preg_replace('~\b(\d{1,2})(st|nd|rd|th)\b~i', '$1', $one);
+    // drop the word "at" used in some WHOIS blocks
+    $one = preg_replace('~\bat\b~i', ' ', $one);
+    // collapse spaces
+    $one = preg_replace('~\s+~', ' ', $one);
+
+    // let PHP parse it now
+    $dt = date_create($one);
+    if ($dt) return $dt->format(DATE_ATOM);
+  }
   return null;
 }
 function first_nonempty(array $bag, array $keys): ?string {
@@ -273,36 +321,103 @@ function clean_statuses(array $arr): array {
 /** Fallback: scan raw WHOIS text for status lines if KV parse missed them */
 function extract_statuses_from_raw(string $txt): array {
   $out = [];
-  foreach (preg_split('~\R~', $txt) as $ln) {
-    if (preg_match('~^\s*(?:domain\s+)?status:\s*(.+)$~i', $ln, $m)) {
-      $s = preg_replace('~\s+https?://\S+$~', '', trim($m[1]));
-      $s = strtolower(preg_replace('~\s+~', ' ', $s));
-      if ($s !== '') $out[] = $s;
+  $lines = preg_split('~\R~', $txt) ?: [];
+  $n = count($lines);
+  for ($i = 0; $i < $n; $i++) {
+    $ln = rtrim($lines[$i], "\r\n");
+    if (preg_match('~^\s*(?:domain\s+)?status:\s*(.*)$~i', $ln, $m)) {
+      $first = trim($m[1]);
+      if ($first !== '') {
+        $out[] = $first;
+      } else {
+        // Block style: consume indented lines
+        $j = $i + 1;
+        while ($j < $n) {
+          $next = rtrim($lines[$j], "\r\n");
+          if (preg_match('~^\s+\S~', $next)) {
+            $out[] = trim($next);
+            $j++;
+            continue;
+          }
+          break;
+        }
+        $i = $j - 1;
+      }
     }
   }
-  $seen=[]; $res=[];
-  foreach ($out as $x) if (!isset($seen[$x])) { $seen[$x]=1; $res[]=$x; }
-  return $res;
+  return clean_statuses($out);
 }
 
 /** Parse domain WHOIS into registrar, creation, statuses, nameservers */
 function parse_domain_whois(string $txt): array {
   $lines = preg_split('~\R~', $txt) ?: [];
   $kv = [];
-  foreach ($lines as $ln) {
-    if (preg_match('~^\s*([^:]+?)\s*:\s*(.+)$~', $ln, $m)) {
-      $k = strtolower(trim($m[1])); $v = trim($m[2]); $kv[$k][] = $v;
+  $n = count($lines);
+
+  for ($i = 0; $i < $n; $i++) {
+    $ln = rtrim($lines[$i], "\r\n");
+    if (!preg_match('~^\s*([^:]+?)\s*:\s*(.*)$~', $ln, $m)) continue;
+
+    $key = strtolower(trim($m[1]));
+    $val = trim($m[2]);
+
+    // If the value is blank here, collect following indented lines as the value block
+    if ($val === '') {
+      $block = [];
+      $j = $i + 1;
+      while ($j < $n) {
+        $next = rtrim($lines[$j], "\r\n");
+        if (preg_match('~^\s+\S~', $next)) {          // indented line => continuation
+          $block[] = trim($next);
+          $j++;
+          continue;
+        }
+        break; // next header or blank/non-indented line
+      }
+      $i = $j - 1;
+      if (!empty($block)) {
+        // Some keys are list-like; store each line as a separate value
+        foreach ($block as $b) {
+          $kv[$key][] = $b;
+        }
+        continue;
+      }
+    }
+
+    // Single-line key:value
+    $kv[$key][] = $val;
+  }
+
+  // Registrar (first non-empty of common variants)
+  $registrar = ($kv['registrar'][0] ?? null) ?: ($kv['sponsoring registrar'][0] ?? null)
+             ?: ($kv['registrar name'][0] ?? null) ?: ($kv['registrar organization'][0] ?? null);
+
+  // Creation date — try common keys, or parse from “Relevant dates:” block (e.g., .gg)
+  $created = null;
+  foreach (['creation date','registered on','created','created on','domain registration date','registration time'] as $k) {
+    if (!empty($kv[$k][0])) { $created = $kv[$k][0]; break; }
+  }
+  if (!$created && !empty($kv['relevant dates'])) {
+    // Look for a line like: "Registered on 12th March 2023 at 15:05:34.456"
+    foreach ($kv['relevant dates'] as $rd) {
+      if (preg_match('~registered on\s+(.+)$~i', $rd, $m)) { $created = $m[1]; break; }
     }
   }
-  $registrar = first_nonempty($kv, ['registrar','sponsoring registrar','registrar name','registrar organization']);
-  $created   = first_nonempty($kv, ['creation date','registered on','created','created on','domain registration date','registration time']);
-  $statuses  = $kv['domain status'] ?? $kv['status'] ?? [];
-  $statuses  = clean_statuses($statuses);
-  if (!$statuses && $txt !== '') {
-    $statuses = extract_statuses_from_raw($txt);
+
+  // Statuses: from “domain status” or “status” (now populated even if block-style)
+  $statuses = $kv['domain status'] ?? $kv['status'] ?? [];
+
+  // Nameservers: handle both “name server” + “name servers” + “nserver”
+  $nss = [];
+  foreach (['name server','name servers','nserver'] as $k) {
+    if (!empty($kv[$k])) {
+      foreach ($kv[$k] as $ns) $nss[] = rtrim(strtolower($ns), '.');
+    }
   }
-  $nss = $kv['name server'] ?? $kv['nserver'] ?? [];
-  $nss = array_values(array_unique(array_map(fn($s)=>rtrim(strtolower($s),'.'), $nss)));
+  $nss = array_values(array_unique(array_filter($nss)));
+
+  // Normalize statuses (strip trailing URLs, lowercase, collapse spaces)
+  $statuses = clean_statuses($statuses);
 
   return [
     'registrar'     => $registrar ?: '',
@@ -310,6 +425,19 @@ function parse_domain_whois(string $txt): array {
     'statuses'      => $statuses,
     'nameservers'   => $nss,
   ];
+}
+
+/** Port-43 client */
+function whois_port43(string $server, string $query, int $timeout = 6): string {
+  $errno = 0; $errstr = '';
+  $fp = @fsockopen($server, 43, $errno, $errstr, $timeout);
+  if (!$fp) return '';
+  stream_set_timeout($fp, $timeout);
+  fwrite($fp, $query . "\r\n");
+  $out = '';
+  while (!feof($fp)) { $out .= fgets($fp, 8192) ?: ''; }
+  fclose($fp);
+  return $out;
 }
 
 /** RDAP */
@@ -687,6 +815,7 @@ foreach ($rawItems as $rawInput) {
         'bytes'     => (int)($ctx['http']['bytes'] ?? 0),
         'sample'    => clip_str((string)($ctx['http']['body'] ?? ''), 600),
       ];
+
     }
     $fields = [];
     foreach ($options as $opt) {

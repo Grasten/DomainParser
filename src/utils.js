@@ -11,6 +11,7 @@ let filteredLinksArray = [];
 const regBracketDotText = /(\s?\W\s?)dot(\s?\W\s?)/ig;
 const regBracketDot = /(\s?\W\s?)\.(\s?\W\s?)/ig;
 const regDomains = /(?<=^|[^a-z0-9])((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[^a-z0-9]|$)/gi;
+const regDomainsExtended = /(https?:\/\/)?(?<=^|[^a-z0-9])((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[^a-z0-9]|$)/gi;
 const regHxxps = /hxxps\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
 const regHxxp = /hxxp\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
 const regSemicolon = / ?\[:] ?/gi;
@@ -28,7 +29,7 @@ function getSelectedUiOptions() {
     .map(el => el.value || el.id.replace(/^checkbox/, ''));
 }
 
-// Visual checkbox toggle (kept as-is)
+// Visual checkbox toggle
 function toggleCheckbox(id, checked){
   const el = document.getElementById(id);
   if (!el) return;
@@ -80,10 +81,44 @@ function getDomains(type) {
 // Extract full URLs (used if user clicks “Parse URLs”)
 function getLinks() {
   let worklist = getInputText();
-  worklist = linkify.match(worklist) || [];
+  const urls = [];
+  console.clear();
+  console.log(worklist);
+
+  // optionally include hostnames if parse URLS with hostnames checkbox selected
+  if (document.getElementById("checkboxParseURLsHostnames").checked){
+    worklist = worklist.match(regDomainsExtended) || [];
+    worklist = [...new Set(worklist)];
+
+    const tempArray = [];
+    worklist.forEach((domain) => {
+
+      // parse as link if http or https present
+      if (domain.match(/https?:\/\//gi)) {
+        tempArray.push(linkify.match(domain)[0]);
+        return;
+      }
+
+      //parse as hostname
+      const el = parse(domain);
+      if (el.isIcann && el.domain && !SLTLDs.includes(el.hostname)) {
+        if (SLTLDs.includes(el.domain)){
+          const tempRegExp = new RegExp(`.+\\.${el.domain}`, "gm");
+          el.domain = el.hostname.match(tempRegExp)[0];
+        }
+        //Adapted to getLinks method
+        el.text = el.domain;
+        tempArray.push(el);
+      }
+    });
+    worklist = tempArray;
+
+  } else {
+    worklist = linkify.match(worklist) || [];
+  }
+
   worklist = [...new Set(worklist)];
 
-  const urls = [];
   worklist.forEach((m) => {
     if (!m.text.includes("@")) {
       const el = parse(m.text);
@@ -138,6 +173,7 @@ function formatDomainInfoPretty(api, uiSelected = []) {
   const items = Array.isArray(api?.items) ? api.items : [];
   const want = new Set(uiSelected || []);
   const out = [];
+  let rtCount = 0, rmCount = 0;
 
   for (const it of items) {
     const d = it.domain || '';
@@ -215,10 +251,101 @@ function formatDomainInfoPretty(api, uiSelected = []) {
       block.push(`${f.HasContent ? 'Content present' : '- No content'}`);
     }
 
-    out.push(block.join('\n'));
+    let bjoin = block.join('\n')
+
+    // ------- FILTERS -------
+    let fres = {}; ///filter results
+    let activeFilters = {}, ActiveAND = false;
+
+    //Output filter separate
+    if (!(bjoin.match(document.getElementById("filterOutput").value))) {
+      rmCount++
+      continue
+    }
+
+    //get selected filters
+    const fs = document.getElementById('secondarySelector');
+    let secondarySelected = Array.from(fs.querySelectorAll('input[type="checkbox"]'))
+      .filter(el => el.checked && !el.disabled)
+      .map(el => el.value || el.id.replace(/^checkbox/, ''));
+
+    secondarySelected.forEach(el => {
+      if(el === "SecondaryAND") ActiveAND = true;
+      else {
+        activeFilters[el] = true;
+      }
+    })
+
+    // run only if any filters are selected
+    if (Object.keys(activeFilters).length) {
+
+      // NC or SH registrars
+      if (activeFilters.RegWithUs){
+        fres.reg = !!(f.Regist ? f.Regist.match(/(namecheap)|(spaceship)/gmi) : false);
+      }
+
+      // Could not detect registry
+      if (activeFilters.RegUnclear){
+        fres.regUnclear = Object.hasOwn(f, "Regist") ? f.Regist === "" : false;
+      }
+
+      // Using either PE or JF
+      if (activeFilters.UseOurMail) {
+        fres.PE = !!(f.MX[0] ? f.MX[0].match(/(private ?email)|(jellyfish)/gmi) : false);
+      }
+
+      // Hosted pointed to our IPs
+      if (activeFilters.HostedWithUs) {
+        fres.hosted = !!(f.IP_org[0] ? f.IP_org[0].match(/(namecheap)|(spaceship)/gmi) : false);
+      }
+
+      // Not suspended
+      if (activeFilters.NotSuspended) {
+        fres.notsusp = Object.hasOwn(f, "IsSusp") ? !f.IsSusp.length : false;
+      }
+
+
+      // debugg
+      //if (activeFilters.debugg){
+      //  console.log(f)
+      //}
+      //console.log(f, "F")
+
+      // use either OR AND when checking conditions
+      let fresArray = Object.values(fres);
+      //console.log(fresArray, "fresarray");
+
+      if (ActiveAND) {
+        if (!fresArray.every(value => value === true)) {
+          rmCount++
+          continue;
+        }
+      } else {
+        if (!fresArray.some(value => value === true)) {
+          rmCount++
+          continue;
+        }
+      }
+
+
+      /*if (ActiveAND){
+        if ((doesntUsePE !==) || notRegistered) {
+          rmCount++;
+          continue;
+        }
+      } else {
+        if (doesntUsePE && notRegistered) {
+          rmCount++;
+          continue;
+        }
+      }*/
+    }
+
+    out.push(bjoin);
+    rtCount++;
   }
 
-  return out.join('\n\n');
+  return {text: out.join('\n\n'), rtCount, rmCount};
 }
 
 /* =========================
@@ -240,10 +367,10 @@ async function handleFetch(){
     // v2: send UI options directly
     const data = await fetchDomainInfo({ options: ui });
 
-    const text = formatDomainInfoPretty(data, ui);
-    document.getElementById('parserOutput').value = text;
-    document.getElementById('parserOutputCounter').innerText =
-      `Domains returned: ${Array.isArray(data.items) ? data.items.length : 0}`;
+    const formattedData = formatDomainInfoPretty(data, ui);
+    document.getElementById('parserOutput').value = formattedData.text;
+    document.getElementById('parserOutputCounter').innerText = `Domains returned: ${formattedData.rtCount}${
+      formattedData.rmCount > 0 ? ` | Removed due to selected options: ${formattedData.rmCount}` : ''}`;
   } catch (e) {
     console.error(e);
   } finally {
@@ -341,7 +468,8 @@ export function openParsedDomains(){
     setTimeout(() => { button.innerHTML = "Open parsed links"; }, 1000);
   } else {
     filteredLinksArray.forEach((el) => {
-      linkify.match(el) ? window.open(`${el}`) : window.open(`https://${el}`);
+      //linkify.match(el) ? window.open(el) : window.open(`https://${el}`);
+      el.match(/https?:\/\//gm) ? window.open(el) : window.open(`https://${el}`);
     });
   }
 }

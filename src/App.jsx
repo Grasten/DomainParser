@@ -7,7 +7,55 @@ function App() {
                    viewBox="0 0 32 32" xmlSpace="preserve">
                     <polygon points="11.941,28.877 0,16.935 5.695,11.24 11.941,17.486 26.305,3.123 32,8.818"/>
               </svg>);
-  const INCLUDE_OPTIONS = ['Reg_date', 'IP', 'IP_org', 'NS', 'MX', 'MX_org', 'IsSusp', 'Regist', 'HasContent'];
+//  const INCLUDE_OPTIONS = ['Reg_date', 'IP', 'IP_org', 'NS', 'MX', 'MX_org', 'IsSusp', 'Regist', 'HasContent'];
+  const INCLUDE_OPTIONS = [
+    {param: "Reg_date", name: "Reg Date", defaultChecked: true, method: "whois"},
+    {param: "NS", name: "Nameservers", defaultChecked: true, method: "whois"},
+    {param: "IP", name: "IP", defaultChecked: true, method: "dig"},
+    {param: "IP_org", name: "IP org", defaultChecked: true, method: "addwhois"},
+    {param: "MX", name: "MX records", defaultChecked: true, method: "dig"},
+    {param: "MX_org", name: "MX org", defaultChecked: true, method: "addwhois"},
+    {param: "IsSusp", name: "Is suspended", defaultChecked: true, method: "whois"},
+    {param: "Regist", name: "Registry", defaultChecked: true, method: "whois"},
+    {param: "HasContent", name: "Has content", defaultChecked: false, group: "curl"},
+  ];
+  const SECONDARY_OPTIONS = [
+    {param: "SecondaryAND", name: "Use AND", defaultChecked: false},
+    {param: "RegWithUs", name: "Reg with us", defaultChecked: false},
+    {param: "RegUnclear", name: "Reg unclear", defaultChecked: false},
+    {param: "UseOurMail", name: "Our mail", defaultChecked: false},
+    {param: "HostedWithUs", name: "Hosted", defaultChecked: false},
+    {param: "NotSuspended", name: "Not Suspended", defaultChecked: false},
+  ];
+
+  function renderCheckboxes(options) {
+    let tempArray = [];
+    options.map((opt) => {
+      const inputId = `checkbox${opt.param}`;
+      const visId = `checkbox${opt.param}Vis`;
+      tempArray.push (
+        <label key={opt.param} htmlFor={inputId} className="parser__options__checkModule">
+          {opt.name}:
+          <input
+            type="checkbox"
+            defaultChecked={opt.defaultChecked}
+            value={opt.param}
+            className="parser__options__checkModule__checkbox"
+            id={inputId}
+            onChange={(e) => toggleCheckbox(visId, e.target.checked)}
+          />
+          <div
+            className={`parser__options__checkModule__vis-checkbox 
+            ${opt.defaultChecked ? "parser__options__checkModule__vis-checkbox--checked" : ""}`}
+            id={visId}
+          >
+            {customCheckboxSVG}
+          </div>
+        </label>
+      );
+    })
+    return tempArray;
+  }
 
   return (
     <>
@@ -72,6 +120,10 @@ function App() {
                 </button>
               </div>
 
+              <fieldset id="secondarySelector" className="parser__topbar__buttons__fieldset">
+                {renderCheckboxes(SECONDARY_OPTIONS)}
+              </fieldset>
+
             </div>
 
             <div className="parser__topbar__buttons__openbox">
@@ -91,29 +143,7 @@ function App() {
               </button>
 
               <fieldset id="infoTypeSelector" className="parser__topbar__buttons__fieldset">
-                {INCLUDE_OPTIONS.map((opt) => {
-                  const inputId = `checkbox${opt}`;
-                  const visId = `checkbox${opt}Vis`;
-                  return (
-                    <label key={opt} htmlFor={inputId} className="parser__options__checkModule">
-                      {opt}:
-                      <input
-                        type="checkbox"
-                        defaultChecked
-                      value={opt}
-                      className="parser__options__checkModule__checkbox"
-                      id={inputId}
-                      onChange={(e) => toggleCheckbox(visId, e.target.checked)}
-                      />
-                      <div
-                        className="parser__options__checkModule__vis-checkbox parser__options__checkModule__vis-checkbox--checked"
-                        id={visId}
-                      >
-                        {customCheckboxSVG}
-                      </div>
-                    </label>
-                  );
-                })}
+                {renderCheckboxes(INCLUDE_OPTIONS)}
               </fieldset>
             </div>
           </div>
@@ -122,7 +152,7 @@ function App() {
         <div className="parser__options">
 
           <label htmlFor="checkboxSkip" className="parser__options__checkModule">
-            Skip common domains (e.g. google.com):
+            Skip common domains:
             <input defaultChecked="true" type="checkbox" className="parser__options__checkModule__checkbox"
                    id="checkboxSkip"
                    onChange={() => toggleCheckbox("checkboxSkipVis")}
@@ -138,6 +168,24 @@ function App() {
             <p className="parser__options__filter__title">Filter:</p>
             <input type="text" className="parser__options__filter__input parser-fields" autoComplete="false" id="filterInput"/>
           </div>
+
+          <div className="parser__options__filter parser__options__general">
+            <p className="parser__options__filter__title">OutputFilter:</p>
+            <input type="text" className="parser__options__filter__input parser-fields" autoComplete="false" id="filterOutput"/>
+          </div>
+
+          <label htmlFor="checkboxParseURLsHostnames" className="parser__options__checkModule">
+            ParseURL+hostnames:
+            <input defaultChecked="true" type="checkbox" className="parser__options__checkModule__checkbox"
+                   id="checkboxParseURLsHostnames"
+                   onChange={() => toggleCheckbox("checkboxParseURLsHostnamesVis")}
+            />
+            <div
+              className="parser__options__checkModule__vis-checkbox parser__options__checkModule__vis-checkbox--checked"
+              id="checkboxParseURLsHostnamesVis">
+              {customCheckboxSVG}
+            </div>
+          </label>
 
         </div>
 
