@@ -8293,4 +8293,6 @@ export const skipDomains = [
   "github.com",
   "wikipedia.org",
   "bbc.co.uk",
+  "pstmrk.it",
+  "avast.com",
 ]

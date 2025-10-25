@@ -70,7 +70,23 @@ const WHOIS_TLD_MAP = [
   'je' => 'whois.je',
   'me' => 'whois.nic.me',
   'io' => 'whois.nic.io',
+  'es'   => 'whois.nic.es',
+  'info' => 'whois.afilias.net',
 ];
+
+const WHOIS_SLD_MAP = [
+  'jp.net' => 'whois.centralnic.com',
+  // (optional) other CentralNic SLDs you care about:
+  'uk.com' => 'whois.centralnic.com',
+  'us.com' => 'whois.centralnic.com',
+  'gb.net' => 'whois.centralnic.com',
+  'de.com' => 'whois.centralnic.com',
+  'eu.com' => 'whois.centralnic.com',
+  'ae.org' => 'whois.centralnic.com',
+];
+
+$GLOBALS['WHOIS_TRACE'] = [];
+$GLOBALS['RDAP_LAST']   = null;
 
 
 /////////////////////////////
@@ -232,44 +248,148 @@ function dig_mx(string $domain): array {
 // WHOIS / RDAP helpers
 /////////////////////////////
 
-function whois_tld_referral(string $tld, int $timeout = 6): ?string {
-  if ($tld === '') return null;
-  $txt = whois_port43('whois.iana.org', $tld, $timeout);
-  if ($txt === '') return null;
-  // IANA uses either "whois:" or "refer:" for the referral field
-  if (preg_match('~^\s*(?:whois|refer)\s*:\s*(\S+)~im', $txt, $m)) {
-    return trim($m[1]);
+function whois_is_no_match(string $txt): bool {
+  if ($txt === '') return false;
+  return (bool)preg_match(
+    '~(0 objects|No entries found|No existen entradas|no match|not found|no data found|no object found|the queried object does not exist|available for registration)~i',
+    $txt
+  );
+}
+
+function whois_suffix_server(string $domain): ?string {
+  $labels = explode('.', strtolower($domain));
+  for ($i = 0; $i < count($labels)-1; $i++) {
+    $suffix = implode('.', array_slice($labels, $i)); // e.g. jp.net, net
+    if (isset(WHOIS_SLD_MAP[$suffix])) return WHOIS_SLD_MAP[$suffix];
   }
   return null;
 }
 
+function whois_no_match_line(string $txt): ?string {
+  if ($txt === '') return null;
+  // Check line-by-line to avoid false positives in disclaimers
+  $lines = preg_split('~\R~', $txt) ?: [];
+  foreach ($lines as $ln) {
+    $line = trim($ln);
+    if ($line === '') continue;
+
+    // Common registry messages
+    $patterns = [
+      '~\bno\s+match\s+for\b~i',          // .com, .net, many others
+      '~\bnot\s+found\b~i',               // “NOT FOUND”
+      '~\bno\s+entries?\s+found\b~i',     // “No entries found”
+      '~\bno\s+data\s+found\b~i',
+      '~\bno\s+object\s+found\b~i',
+      '~\bno\s+such\s+domain\b~i',
+      '~\bthe\s+queried\s+object\s+does\s+not\s+exist\b~i',
+      '~\bstatus:\s*available\b~i',       // some registries say “Status: available”
+      '~\bavailable\s+for\s+registration\b~i',
+      '~\bhas\s+not\s+been\s+registered\b~i',
+
+      // NEW: ESNIC / .es variants
+      '~\b0\s+objects\b~i',                 // "% This query returned 0 objects."
+      '~\bno\s+existen\s+entradas\b~i',     // Spanish: "No existen entradas ..."
+    ];
+    foreach ($patterns as $re) {
+      if (preg_match($re, $line)) {
+        return $line; // return the exact matching line (e.g., "No match for "EXAMPLE.TLD"")
+      }
+    }
+  }
+  return null;
+}
+
+function whois_tld_referral(string $tld): ?string {
+  // Query IANA for this TLD’s WHOIS record
+  $timeout = defined('WHOIS_TIMEOUT_SEC') ? WHOIS_TIMEOUT_SEC : 5;
+  $txt = whois_port43('whois.iana.org', $tld, $timeout);
+  if ($txt === '') return null;
+
+  // Clean and normalize
+  $txt = trim(preg_replace('/[^\P{C}\n]+/u', '', $txt)); // remove control chars
+  $txt = str_replace("\r", '', $txt);
+
+  // Match "whois:" or "refer:" lines that contain a proper hostname
+  if (preg_match(
+    '~^\s*(?:whois|refer)\s*:\s*([a-z0-9.-]+\.[a-z]{2,})\s*$~im',
+    $txt,
+    $m
+  )) {
+    $ref = strtolower(trim($m[1]));
+
+    // Basic sanity: must contain at least one dot and no spaces
+    if (preg_match('/^[a-z0-9.-]+\.[a-z]{2,}$/i', $ref)) {
+      return $ref;
+    }
+  }
+
+  // Nothing valid found
+  return null;
+}
+
 function whois_text_domain(string $domain): string {
+  $trace =& $GLOBALS['WHOIS_TRACE'];
+
+  // helper
+  $push = function(string $method, ?string $server, bool $ok, int $bytes, string $note = '') use (&$trace) {
+    $trace[] = [
+      'method' => $method,
+      'server' => $server,
+      'ok'     => $ok,
+      'bytes'  => $bytes,
+      'note'   => $note,
+    ];
+  };
+
   // 1) Try local whois binary first
   if (is_proc_open_enabled()) {
     $cmd = sprintf('%s -H %s', WHOIS_BIN, escapeshellarg($domain));
     $res = run_cmd($cmd, WHOIS_TIMEOUT_SEC, WHOIS_MAX_BYTES);
     $txt = trim(($res['out'] ?: $res['err']) ?? '');
     $bad = ($res['exit'] !== 0) || ($txt === '') || stripos($txt, 'not found') !== false;
+    $push('whois-bin', null, !$bad, strlen($txt));
     if (!$bad) return substr($txt, 0, WHOIS_MAX_BYTES);
   }
 
-  // 2) Port-43 by known TLD map
-  $tld = strtolower(substr(strrchr($domain, '.'), 1) ?: '');
-  if ($tld && !empty(WHOIS_TLD_MAP[$tld])) {
-    $txt = whois_port43(WHOIS_TLD_MAP[$tld], $domain);
-    if (trim($txt) !== '') return substr($txt, 0, WHOIS_MAX_BYTES);
+  // 2) SLD-specific server (multi-label suffixes like jp.net -> CentralNic)
+  if ($srv = whois_suffix_server($domain)) {
+    $txt = whois_port43($srv, $domain);
+    $ok  = trim($txt) !== '';
+    $push('port43-suffix', $srv, $ok, strlen($txt));
+    if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
   }
 
   // 3) Generic IANA referral (works for many TLDs if not in the map)
-  $ref = whois_tld_referral($tld);
-  if ($ref) {
-    $txt = whois_port43($ref, $domain);
-    if (trim($txt) !== '') return substr($txt, 0, WHOIS_MAX_BYTES);
+  $tld = strtolower(substr($domain, strrpos($domain, '.') + 1));
+  if ($slv = whois_suffix_server($domain)) {
+    // already tried above; nothing to do
+  }
+  if ($srv = whois_tld_referral($tld)) {
+    // sanity: require a plausible hostname
+    if (preg_match('~^[a-z0-9.-]+\.[a-z]{2,}$~i', $srv)) {
+      $txt = whois_port43($srv, $domain);
+      $ok  = trim($txt) !== '';
+      $push('port43-referral', $srv, $ok, strlen($txt));
+      if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
+    } else {
+      $push('port43-referral', $srv, false, 0, 'invalid-referral');
+    }
+  } else {
+    $push('port43-referral', null, false, 0, 'no-referral');
   }
 
-  // 4) RDAP fallback (some ccTLDs don’t have RDAP; still worth trying)
-  $rd = rdap_domain($domain);
-  return $rd ? rdap_domain_textify($rd) : '';
+  // 4) TLD hard map fallback (if you use one)
+  if (defined('WHOIS_TLD_MAP') && isset(WHOIS_TLD_MAP[$tld])) {
+    $srv = WHOIS_TLD_MAP[$tld];
+    $txt = whois_port43($srv, $domain);
+    $ok  = trim($txt) !== '';
+    $push('port43-map', $srv, $ok, strlen($txt));
+    if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
+  }
+
+  // Nothing worked
+  $push('port43-none', null, false, 0, 'all-attempts-failed');
+  return '';
 }
 
 function whois_text_ip(string $ip): string {
@@ -508,33 +628,47 @@ function enrich_whois_with_rdap_if_missing(array $whois, string $domain): array 
   $needReg  = empty($whois['registrar']);
   $needDate = empty($whois['creation_date']);
   if (!$needReg && !$needDate) return $whois;
+
   $rd = rdap_domain($domain);
   if (!$rd) return $whois;
+
+  $used = false;
 
   if ($needDate && !empty($rd['events'])) {
     foreach ($rd['events'] as $e) {
       $act = strtolower((string)($e['eventAction'] ?? ''));
       if (in_array($act, ['registration','registered','create','created'], true) && !empty($e['eventDate'])) {
         $whois['creation_date'] = $e['eventDate'];
+        $used = true;
         break;
       }
     }
   }
+
   if ($needReg && !empty($rd['entities'])) {
     foreach ($rd['entities'] as $ent) {
-      $roles = array_map('strtolower', $ent['roles'] ?? []);
+      $roles = array_map('strtolower', (array)($ent['roles'] ?? []));
       if (in_array('registrar', $roles, true)) {
         $name = null;
         if (!empty($ent['vcardArray'][1])) {
-          foreach ($ent['vcardArray'][1] as $v) {
+          foreach ($ent['vcardArray['] ?? $ent['vcardArray'][1] as $v) {
             if (($v[0] ?? '') === 'fn' && !empty($v[3])) { $name = $v[3]; break; }
           }
         }
         if (!$name && !empty($ent['fn'])) $name = $ent['fn'];
-        if ($name) { $whois['registrar'] = $name; break; }
+        if ($name) { $whois['registrar'] = $name; $used = true; break; }
       }
     }
   }
+
+  if ($used) {
+    $GLOBALS['RDAP_LAST'] = [
+      'used'    => true,
+      'excerpt' => rdap_domain_textify($rd),
+      'json'    => $rd, // keep full JSON in memory (not printed unless you add it)
+    ];
+  }
+
   return $whois;
 }
 
@@ -668,24 +802,34 @@ $OPTION_REGISTRY = [
   'IsSusp' => [
     'deps' => ['WHOIS'],
     'present' => function(array $ctx): array {
+      $raw = (string)($ctx['whois_raw'] ?? '');
       $st  = clean_statuses($ctx['whois']['statuses'] ?? []);
-      $raw = strtolower((string)($ctx['whois_raw'] ?? ''));
 
-      $has = function(string $regex) use ($st, $raw): bool {
+      // If parsed list is empty but we have raw text, try block-aware fallback
+      if (!$st && $raw !== '') {
+        $st = extract_statuses_from_raw($raw);
+      }
+
+      // If we *still* have no statuses, report that WHOIS/RDAP didn’t provide them
+      if (!$st) {
+        return ['notFound'];
+      }
+
+      // Detect holds (parsed OR raw fallback)
+      $rawLower = strtolower($raw);
+      $has = function(string $regex) use ($st, $rawLower): bool {
         foreach ($st as $s) if (preg_match($regex, $s)) return true;
-        return $raw !== '' ? (bool)preg_match($regex, $raw) : false;
+        return $rawLower !== '' ? (bool)preg_match($regex, $rawLower) : false;
       };
 
       $out = [];
       if ($has('~server[\s\-_]*hold~i')) $out[] = 'serverHold';
       if ($has('~client[\s\-_]*hold~i')) $out[] = 'clientHold';
-      // If you want broader semantics:
-      // if ($has('~inactive~i')) $out[] = 'inactive';
 
-      // de-dup
-      $seen=[]; $res=[];
+      // de-dup, preserve order
+      $seen = []; $res = [];
       foreach ($out as $x) if (!isset($seen[$x])) { $seen[$x]=1; $res[]=$x; }
-      return $res;
+      return $res; // [] means "statuses present, but no hold flags"
     }
   ],
   'Regist' => [
@@ -693,7 +837,19 @@ $OPTION_REGISTRY = [
     'present' => function(array $ctx): string {
       return $ctx['whois']['registrar'] ?? '';
     }
-  ],
+  ],'NoMatch' => [
+      'deps' => ['WHOIS'],
+      'present' => function(array $ctx): string {
+        // Try parsed WHOIS text first
+        $raw = (string)($ctx['whois_raw'] ?? '');
+        $line = whois_no_match_line($raw);
+        if ($line !== null) return $line;
+
+        // Optional: if you kept RDAP JSON somewhere, you can mark 404 here.
+        // Otherwise, just return empty string to mean “not not-found”.
+        return '';
+      }
+    ],
 
   // DNS & orgs
   'IP' => [
@@ -850,7 +1006,15 @@ foreach ($rawItems as $rawInput) {
   if (!empty($deps['WHOIS'])) {
     $wtxt = whois_text_domain($norm);
     $ctx['whois_raw'] = $wtxt;
-    if ($debug) $dbg['whois_raw_excerpt'] = clip_str($wtxt);
+    if ($debug) {
+      $dbg['whois_trace'] = $GLOBALS['WHOIS_TRACE'] ?? [];
+      if (!empty($GLOBALS['RDAP_LAST']['used'])) {
+        $dbg['rdap_used']    = true;
+        $dbg['rdap_excerpt'] = clip_str($GLOBALS['RDAP_LAST']['excerpt'] ?? '');
+        // if you also want the full RDAP JSON in debug (careful with size):
+        // $dbg['rdap_json'] = $GLOBALS['RDAP_LAST']['json'] ?? null;
+      }
+    }
     $ctx['whois'] = parse_domain_whois($wtxt);
     $ctx['whois'] = enrich_whois_with_rdap_if_missing($ctx['whois'], $norm);
     if ($debug) $dbg['whois_parsed'] = $ctx['whois'];

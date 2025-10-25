@@ -1,5 +1,5 @@
 import './App.scss'
-import {parseDomains, openParsedDomains, findTargets, copyCommand, handleFetch, toggleCheckbox} from "./utils.js";
+import {parseDomains, openParsedDomains, findTargets, handleFetch, toggleCheckbox} from "./utils.js";
 
 function App() {
 
@@ -23,6 +23,7 @@ function App() {
     {param: "SecondaryAND", name: "Use AND", defaultChecked: false},
     {param: "RegWithUs", name: "Reg with us", defaultChecked: false},
     {param: "RegUnclear", name: "Reg unclear", defaultChecked: false},
+    {param: "NotReg", name: "Not registered", defaultChecked: false},
     {param: "UseOurMail", name: "Our mail", defaultChecked: false},
     {param: "HostedWithUs", name: "Hosted", defaultChecked: false},
     {param: "NotSuspended", name: "Not Suspended", defaultChecked: false},
@@ -110,7 +111,7 @@ function App() {
               <button className="parser__topbar__buttons__parsebox__button parser__topbar__buttons__button" id="parseURLs"
                       onClick={()=> parseDomains("url")}>Parse URLs</button>
 
-              <div className="parser__topbar__buttons__button parser__topbar__buttons__split
+              {/*<div className="parser__topbar__buttons__button parser__topbar__buttons__split
               parser__topbar__buttons__openbox__button" id="parseOpen">
                 <button className="parser__topbar__buttons__button" id="getwhois"
                         onClick={() => copyCommand("whois")}>Copy bulk Whois
@@ -118,7 +119,7 @@ function App() {
                 <button className="parser__topbar__buttons__button" id="getdig"
                         onClick={() => copyCommand("dig")}>Copy bulk {<br/>} dig
                 </button>
-              </div>
+              </div>*/}
 
               <fieldset id="secondarySelector" className="parser__topbar__buttons__fieldset">
                 {renderCheckboxes(SECONDARY_OPTIONS)}

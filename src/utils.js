@@ -187,71 +187,81 @@ function formatDomainInfoPretty(api, uiSelected = []) {
       block.push(d);
     }
 
-    // IP / IP_org (single combined line)
-    if (want.has('IP') || want.has('IP_org')) {
-      const ips = Array.isArray(f.IP) ? f.IP : [];
-      const orgs = Array.isArray(f.IP_org) ? f.IP_org : [];
-      if (ips.length) {
-        const orgStr = orgs.length ? ` - ${orgs.join(', ')}` : '';
-        block.push(ips.map(ip => `${ip}${orgStr}`).join('; '));
-      } else if (want.has('IP_org') && orgs.length) {
-        block.push(orgs.join(', '));
-      } else {
-        block.push('- Not pointed');
-      }
-    }
-
-    // NS (comma-separated)
-    if (want.has('NS')) {
-      const ns = Array.isArray(f.NS) ? f.NS : [];
-      block.push(ns.length ? ns.join(', ') : '- No NS');
-    }
-
-    // MX (combine host with matching MX_org by index when possible)
-    if (want.has('MX') || want.has('MX_org')) {
-      const mxHosts = Array.isArray(f.MX) ? f.MX : [];
-      const mxOrgs = Array.isArray(f.MX_org) ? f.MX_org : [];
-
-      // Always show the MX header if either option is selected
-      //block.push(`${mxHosts.length ? 'MX:' : '- No MX'}`);
-
-      if (mxHosts.length && mxOrgs.length) {
-        // Pair by index; if lengths differ, fall back gracefully
-        const n = Math.max(mxHosts.length, mxOrgs.length);
-        for (let i = 0; i < n; i++) {
-          const host = mxHosts[i] ?? mxHosts[mxHosts.length - 1] ?? '';
-          const org = mxOrgs[i] ?? '';
-          if (host && org) block.push(`${host}: ${org}`);
-          else if (host) block.push(host);
-          else if (org) block.push(org);
+    // Result build cycle, stop if no match
+    if (f.NoMatch) {
+      block.push(`${f.NoMatch}`);
+    } else {
+      // IP / IP_org (single combined line)
+      if (want.has('IP') || want.has('IP_org')) {
+        const ips = Array.isArray(f.IP) ? f.IP : [];
+        const orgs = Array.isArray(f.IP_org) ? f.IP_org : [];
+        if (ips.length) {
+          const orgStr = orgs.length ? ` - ${orgs.join(', ')}` : '';
+          block.push(ips.map(ip => `${ip}${orgStr}`).join('; '));
+        } else if (want.has('IP_org') && orgs.length) {
+          block.push(orgs.join(', '));
+        } else {
+          block.push('- Not pointed');
         }
-      } else if (mxHosts.length) {
-        // Only hosts available
-        mxHosts.forEach(h => block.push(h));
-      } else if (mxOrgs.length) {
-        // Only IP-org entries available
-        mxOrgs.forEach(s => block.push(s));
-      } else {
-        block.push('- No MX');
+      }
+
+      // NS (comma-separated)
+      if (want.has('NS')) {
+        const ns = Array.isArray(f.NS) ? f.NS : [];
+        block.push(ns.length ? ns.join(', ') : '- No NS');
+      }
+
+      // MX (combine host with matching MX_org by index when possible)
+      if (want.has('MX') || want.has('MX_org')) {
+        const mxHosts = Array.isArray(f.MX) ? f.MX : [];
+        const mxOrgs = Array.isArray(f.MX_org) ? f.MX_org : [];
+
+        // Always show the MX header if either option is selected
+        //block.push(`${mxHosts.length ? 'MX:' : '- No MX'}`);
+
+        if (mxHosts.length && mxOrgs.length) {
+          // Pair by index; if lengths differ, fall back gracefully
+          const n = Math.max(mxHosts.length, mxOrgs.length);
+          for (let i = 0; i < n; i++) {
+            const host = mxHosts[i] ?? mxHosts[mxHosts.length - 1] ?? '';
+            const org = mxOrgs[i] ?? '';
+            if (host && org) block.push(`${host}: ${org}`);
+            else if (host) block.push(host);
+            else if (org) block.push(org);
+          }
+        } else if (mxHosts.length) {
+          // Only hosts available
+          mxHosts.forEach(h => block.push(h));
+        } else if (mxOrgs.length) {
+          // Only IP-org entries available
+          mxOrgs.forEach(s => block.push(s));
+        } else {
+          block.push('- No MX');
+        }
+      }
+
+      // IsSusp (exact phrasing)
+      if (want.has('IsSusp')) {
+        let holds = [];
+        if (Array.isArray(f.IsSusp) && f.IsSusp[0] === "notFound") {
+          block.push('Status search failed');
+        } else {
+          holds = f.IsSusp;
+          block.push(holds.length ? `Suspended: ${holds.join(', ')}` : 'Not suspended');
+        }
+      }
+
+      // Regist
+      if (want.has('Regist')) {
+        block.push(f.Regist || 'Registry search failed');
+      }
+      // HasContent
+      if (want.has('HasContent')) {
+        block.push(`${f.HasContent ? 'Content present' : '- No content'}`);
       }
     }
 
-    // IsSusp (exact phrasing)
-    if (want.has('IsSusp')) {
-      const holds = Array.isArray(f.IsSusp) ? f.IsSusp : [];
-      block.push(holds.length ? `Suspended: ${holds.join(', ')}` : 'Not suspended');
-    }
-
-    // Regist
-    if (want.has('Regist')) {
-      block.push(f.Regist || 'Could not detect registry');
-    }
-    // HasContent
-    if (want.has('HasContent')) {
-      block.push(`${f.HasContent ? 'Content present' : '- No content'}`);
-    }
-
-    let bjoin = block.join('\n')
+    let bjoin = block.join('\n') // joing all the built result blocks together
 
     // ------- FILTERS -------
     let fres = {}; ///filter results
@@ -276,7 +286,7 @@ function formatDomainInfoPretty(api, uiSelected = []) {
       }
     })
 
-    // run only if any filters are selected
+    // run only if any filters are selected, true means meets requirements to pass the filter
     if (Object.keys(activeFilters).length) {
 
       // NC or SH registrars
@@ -286,7 +296,12 @@ function formatDomainInfoPretty(api, uiSelected = []) {
 
       // Could not detect registry
       if (activeFilters.RegUnclear){
-        fres.regUnclear = Object.hasOwn(f, "Regist") ? f.Regist === "" : false;
+        fres.regUnclear = Object.hasOwn(f, "Regist") ? (f.Regist === "" && !f.NoMatch) : false;
+      }
+
+      // Display not registered domains
+      if (activeFilters.NotReg){
+        fres.notReg = !!f.NoMatch;
       }
 
       // Using either PE or JF
@@ -301,7 +316,10 @@ function formatDomainInfoPretty(api, uiSelected = []) {
 
       // Not suspended
       if (activeFilters.NotSuspended) {
-        fres.notsusp = Object.hasOwn(f, "IsSusp") ? !f.IsSusp.length : false;
+        if (Object.hasOwn(f, "IsSusp") && f.IsSusp[0] !== "notFound") {
+          fres.notsusp = !f.IsSusp.length
+        }
+        //fres.notsusp = Object.hasOwn(f, "IsSusp") ? !f.IsSusp.length : false;
       }
 
 
@@ -309,9 +327,9 @@ function formatDomainInfoPretty(api, uiSelected = []) {
       //if (activeFilters.debugg){
       //  console.log(f)
       //}
-      //console.log(f, "F")
 
       // use either OR AND when checking conditions
+      console.log(fres)
       let fresArray = Object.values(fres);
       //console.log(fresArray, "fresarray");
 
@@ -341,6 +359,7 @@ function formatDomainInfoPretty(api, uiSelected = []) {
       }*/
     }
 
+    console.log(f, "F")
     out.push(bjoin);
     rtCount++;
   }
@@ -364,6 +383,8 @@ async function handleFetch(){
 
   try {
     const ui = getSelectedUiOptions();
+    // to receive info if the domain was not found
+    ui.push('NoMatch')
     // v2: send UI options directly
     const data = await fetchDomainInfo({ options: ui });
 
