@@ -11,10 +11,11 @@ let filteredLinksArray = [];
 const regBracketDotText = /(\s?\W\s?)dot(\s?\W\s?)/ig;
 const regBracketDot = /(\s?\W\s?)\.(\s?\W\s?)/ig;
 const regDomains = /(?<=^|[^a-z0-9])((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[^a-z0-9]|$)/gi;
-const regDomainsExtended = /(https?:\/\/)?(?<=^|[^a-z0-9])((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[^a-z0-9]|$)/gi;
+const regDomainsExtended = /(https?:\/\/)?(?<=^|[^a-z0-9])((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[^a-z0-9]|$)(\S+)?/gi;
 const regHxxps = /hxxps\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
 const regHxxp = /hxxp\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
 const regSemicolon = / ?\[:] ?/gi;
+const regSuspended = /serverHold|clientHold|Inactive|notFound/i;
 
 /* =========================
    UI helpers
@@ -83,19 +84,23 @@ function getLinks() {
   let worklist = getInputText();
   const urls = [];
   console.clear();
-  console.log(worklist);
+  //console.log(worklist, 'worklist');
 
   // optionally include hostnames if parse URLS with hostnames checkbox selected
   if (document.getElementById("checkboxParseURLsHostnames").checked){
     worklist = worklist.match(regDomainsExtended) || [];
+    console.log(worklist, 'worklist after exteneded');
     worklist = [...new Set(worklist)];
 
     const tempArray = [];
     worklist.forEach((domain) => {
 
+      console.log(domain, 'url domain');
+
       // parse as link if http or https present
       if (domain.match(/https?:\/\//gi)) {
         tempArray.push(linkify.match(domain)[0]);
+        console.log(linkify.match(domain), 'linkifyMatchHttps');
         return;
       }
 
@@ -180,6 +185,13 @@ function formatDomainInfoPretty(api, uiSelected = []) {
     const f = it.fields || {};
     const block = [];
 
+    // Sanitise the suspension list in case it is broken
+    let tempSuspArray = []
+    f.IsSusp.forEach((element) => {
+      if (element.match(regSuspended)) tempSuspArray.push(element.match(regSuspended));
+    })
+    f.IsSusp = tempSuspArray;
+
     // Domain line (append Reg_date if selected and present)
     if (want.has('Reg_date') && f.Reg_date) {
       block.push(`${d} - ${f.Reg_date}`);
@@ -204,13 +216,11 @@ function formatDomainInfoPretty(api, uiSelected = []) {
           block.push('- Not pointed');
         }
       }
-
       // NS (comma-separated)
       if (want.has('NS')) {
         const ns = Array.isArray(f.NS) ? f.NS : [];
         block.push(ns.length ? ns.join(', ') : '- No NS');
       }
-
       // MX (combine host with matching MX_org by index when possible)
       if (want.has('MX') || want.has('MX_org')) {
         const mxHosts = Array.isArray(f.MX) ? f.MX : [];
@@ -239,18 +249,20 @@ function formatDomainInfoPretty(api, uiSelected = []) {
           block.push('- No MX');
         }
       }
-
       // IsSusp (exact phrasing)
       if (want.has('IsSusp')) {
         let holds = [];
         if (Array.isArray(f.IsSusp) && f.IsSusp[0] === "notFound") {
           block.push('Status search failed');
         } else {
+          //double-check the suspension statuses to make sure
+          /*f.IsSusp.forEach(h => {
+            if (h.match(regSuspended)) holds.push(h)
+          });*/
           holds = f.IsSusp;
           block.push(holds.length ? `Suspended: ${holds.join(', ')}` : 'Not suspended');
         }
       }
-
       // Regist
       if (want.has('Regist')) {
         block.push(f.Regist || 'Registry search failed');
@@ -329,7 +341,7 @@ function formatDomainInfoPretty(api, uiSelected = []) {
       //}
 
       // use either OR AND when checking conditions
-      console.log(fres)
+      console.log(fres, 'fres')
       let fresArray = Object.values(fres);
       //console.log(fresArray, "fresarray");
 

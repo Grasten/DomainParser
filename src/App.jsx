@@ -122,6 +122,7 @@ function App() {
               </div>*/}
 
               <fieldset id="secondarySelector" className="parser__topbar__buttons__fieldset">
+                <p>Output filters</p>
                 {renderCheckboxes(SECONDARY_OPTIONS)}
               </fieldset>
 
@@ -144,6 +145,7 @@ function App() {
               </button>
 
               <fieldset id="infoTypeSelector" className="parser__topbar__buttons__fieldset">
+                <p>Fetch Options</p>
                 {renderCheckboxes(INCLUDE_OPTIONS)}
               </fieldset>
             </div>
@@ -171,12 +173,12 @@ function App() {
           </div>
 
           <div className="parser__options__filter parser__options__general">
-            <p className="parser__options__filter__title">OutputFilter:</p>
+            <p className="parser__options__filter__title">Output Filter:</p>
             <input type="text" className="parser__options__filter__input parser-fields" autoComplete="false" id="filterOutput"/>
           </div>
 
           <label htmlFor="checkboxParseURLsHostnames" className="parser__options__checkModule">
-            ParseURL+hostnames:
+            Parse URLs include hostnames:
             <input defaultChecked="true" type="checkbox" className="parser__options__checkModule__checkbox"
                    id="checkboxParseURLsHostnames"
                    onChange={() => toggleCheckbox("checkboxParseURLsHostnamesVis")}

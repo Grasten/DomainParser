@@ -1,6 +1,6 @@
 <?php
 /**
- * Domain Intelligence API v2 — domains.php (with debug mode)
+ * Domain Intelligence API v2 — domains.php (with debug mode + trace)
  * PHP 8.1
  *
  * POST JSON:
@@ -26,10 +26,11 @@
 /////////////////////////////
 // CORS & error handling
 /////////////////////////////
-header('Content-Type: application/json; charset=utf-8');
+header('Content-Type: application/json; charset=UTF-8');
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(204); exit; }
 
 error_reporting(E_ALL);
@@ -46,172 +47,110 @@ register_shutdown_function(function () {
       'ok'    => false,
       'error' => 'fatal',
       'detail'=> $e['message'],
-      'file'  => basename($e['file']),
-      'line'  => $e['line'],
+      'file'  => basename($e['file'] ?? ''),
+      'line'  => (int)($e['line'] ?? 0),
     ], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
   }
 });
 
-$started = microtime(true);
-
 /////////////////////////////
-// Config
+// Trace globals
 /////////////////////////////
-const DIG_BIN   = 'dig';
-const WHOIS_BIN = 'whois';
-const DIG_TIMEOUT_SEC   = 4;
-const WHOIS_TIMEOUT_SEC = 8;
-const WHOIS_MAX_BYTES   = 200000;
-
-const DEBUG_RAW_LIMIT   = 4000; // limit raw text in debug payload
-
-const WHOIS_TLD_MAP = [
-  'gg' => 'whois.gg',
-  'je' => 'whois.je',
-  'me' => 'whois.nic.me',
-  'io' => 'whois.nic.io',
-  'es'   => 'whois.nic.es',
-  'info' => 'whois.afilias.net',
-];
-
-const WHOIS_SLD_MAP = [
-  'jp.net' => 'whois.centralnic.com',
-  // (optional) other CentralNic SLDs you care about:
-  'uk.com' => 'whois.centralnic.com',
-  'us.com' => 'whois.centralnic.com',
-  'gb.net' => 'whois.centralnic.com',
-  'de.com' => 'whois.centralnic.com',
-  'eu.com' => 'whois.centralnic.com',
-  'ae.org' => 'whois.centralnic.com',
-];
-
 $GLOBALS['WHOIS_TRACE'] = [];
 $GLOBALS['RDAP_LAST']   = null;
 
+/////////////////////////////
+// Constants & utilities
+/////////////////////////////
+const WHOIS_BIN          = '/usr/bin/whois';
+const DIG_BIN            = '/usr/bin/dig';
+const CURL_UA            = 'DomainIntel/2 (+https://test.grasten.org)';
+const WHOIS_MAX_BYTES    = 128*1024;
+const WHOIS_TIMEOUT_SEC  = 6;
+const DIG_TIMEOUT_SEC    = 4;
+const HTTP_UA            = CURL_UA;
 
-/////////////////////////////
-// Helpers: IO/JSON/IDN/date
-/////////////////////////////
-function body_json(): array {
-  $raw = file_get_contents('php://input');
-  if (!$raw) return [];
-  $data = json_decode($raw, true);
-  return is_array($data) ? $data : [];
-}
-function clip_str(string $s, int $n = DEBUG_RAW_LIMIT): string {
-  return (strlen($s) > $n) ? (substr($s, 0, $n).'…') : $s;
-}
-function idn_to_ascii_safe(string $host): string {
-  if (function_exists('idn_to_ascii')) {
-    $ascii = @idn_to_ascii($host, IDNA_DEFAULT);
-    if ($ascii !== false) return $ascii;
-    if (defined('INTL_IDNA_VARIANT_UTS46')) {
-      $ascii = @idn_to_ascii($host, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46);
-      if ($ascii !== false) return $ascii;
-    }
-  }
-  return $host;
-}
-function normalize_domain(string $input): ?string {
-  $s = trim(strtolower($input));
-  if (strpos($s, '://') !== false) {
-    $p = parse_url($s);
-    $s = $p['host'] ?? $s;
-  }
-  $s = rtrim($s, '.');
-  $s = preg_split('~[\/\s?#]~', $s, 2)[0] ?? $s;
-  $s = idn_to_ascii_safe($s);
-  if (!preg_match('~^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$~i', $s)) return null;
-  return $s;
-}
-function is_full_url(string $s): bool {
-  return (bool) preg_match('~^[a-z][a-z0-9+.-]*://~i', $s);
-}
-function to_us_date(string $isoOrAny = null): string {
-  if (!$isoOrAny) return '';
-  if (preg_match('~^(\d{4})-(\d{2})-(\d{2})~', $isoOrAny, $m)) {
-    return intval($m[2]).'/'.intval($m[3]).'/'.$m[1]; // M/D/YYYY
-  }
-  $d = date_create($isoOrAny);
-  return $d ? (intval($d->format('n')).'/'.intval($d->format('j')).'/'.$d->format('Y')) : '';
-}
-
-/////////////////////////////
-// Shell + DNS helpers
-/////////////////////////////
 function is_proc_open_enabled(): bool {
-  if (!function_exists('proc_open')) return false;
-  $disabled = strtolower((string) ini_get('disable_functions'));
-  return (strpos($disabled, 'proc_open') === false);
+  $disabled = array_map('trim', explode(',', (string)ini_get('disable_functions')));
+  return function_exists('proc_open') && !in_array('proc_open', $disabled, true);
 }
-function run_cmd(string $cmd, int $timeoutSec, int $maxBytes = 1000000): array {
-  if (!is_proc_open_enabled()) return ['out'=>'', 'err'=>'proc_open disabled', 'exit'=>1];
-  $desc = [0=>['pipe','r'], 1=>['pipe','w'], 2=>['pipe','w']];
-  $proc = proc_open($cmd, $desc, $pipes, null, null, ['bypass_shell'=>true]);
-  if (!is_resource($proc)) return ['out'=>'', 'err'=>'failed to start', 'exit'=>1];
-  foreach ([0,1,2] as $i) if (isset($pipes[$i]) && is_resource($pipes[$i])) stream_set_blocking($pipes[$i], false);
-  if (isset($pipes[0]) && is_resource($pipes[0])) { fclose($pipes[0]); unset($pipes[0]); }
-  $out=''; $err=''; $start=microtime(true);
+function run_cmd(string $cmd, int $timeout = 5, int $maxBytes = 262144): array {
+  $descriptors = [
+    0 => ['pipe','r'],
+    1 => ['pipe','w'],
+    2 => ['pipe','w'],
+  ];
+  $p = @proc_open($cmd, $descriptors, $pipes);
+  if (!is_resource($p)) return ['exit'=>-1, 'out'=>'', 'err'=>'proc_open failed'];
+  fclose($pipes[0]);
+  stream_set_blocking($pipes[1], false);
+  stream_set_blocking($pipes[2], false);
+  $out = ''; $err = '';
+  $start = microtime(true);
   while (true) {
-    if (isset($pipes[1]) && is_resource($pipes[1])) { $c = stream_get_contents($pipes[1]); if ($c!==false) $out.=$c; }
-    if (isset($pipes[2]) && is_resource($pipes[2])) { $c = stream_get_contents($pipes[2]); if ($c!==false) $err.=$c; }
-    if (strlen($out)+strlen($err) > $maxBytes) break;
-    $st = proc_get_status($proc); if (!$st['running']) break;
-    if ((microtime(true)-$start) > $timeoutSec) { proc_terminate($proc, 9); $err.="\n[TIMEOUT {$timeoutSec}s]"; break; }
-    usleep(30000);
+    if (isset($pipes[1]) && !feof($pipes[1])) $out .= fread($pipes[1], 8192);
+    if (isset($pipes[2]) && !feof($pipes[2])) $err .= fread($pipes[2], 8192);
+    if ((microtime(true)-$start) > $timeout) break;
+    if (feof($pipes[1]) && feof($pipes[2])) break;
+    usleep(20000);
+    if (strlen($out) > $maxBytes) { $out = substr($out, 0, $maxBytes); break; }
   }
-  foreach ($pipes as $p) if (is_resource($p)) fclose($p);
-  $exit = proc_close($proc);
-  return ['out'=>$out,'err'=>$err,'exit'=>$exit];
+  foreach ($pipes as $pp) if (is_resource($pp)) @fclose($pp);
+  $status = proc_get_status($p);
+  if ($status && $status['running']) @proc_terminate($p);
+  $code = @proc_close($p);
+  return ['exit'=>$code, 'out'=>$out, 'err'=>$err];
 }
-function safe_dns_get_record(string $host, int $type): array {
-  try { $res = @dns_get_record($host, $type); return is_array($res) ? $res : []; }
-  catch (Throwable $e) { return []; }
+
+function is_full_url(string $s): bool {
+  return (bool)preg_match('~^https?://~i', $s);
 }
-function dig_short(string $qname, string $type): array {
+function to_us_date(string $s): string {
+  if ($s === '') return '';
+  $t = strtotime($s);
+  if ($t === false) return '';
+  return date('m/d/Y', $t);
+}
+
+/////////////////////////////
+// DNS helpers
+/////////////////////////////
+function dig_a(string $domain): array {
   if (is_proc_open_enabled()) {
-    $cmd = sprintf('%s +short %s %s +time=%d +tries=1', DIG_BIN, escapeshellarg($type), escapeshellarg($qname), DIG_TIMEOUT_SEC);
+    $cmd = sprintf('%s +short A %s +time=%d +tries=1', DIG_BIN, escapeshellarg($domain), DIG_TIMEOUT_SEC);
     $res = run_cmd($cmd, DIG_TIMEOUT_SEC);
-    $out = trim($res['out']);
-    if ($out !== '') return array_values(array_filter(array_map('trim', explode("\n", $out))));
+    $lines = array_values(array_filter(array_map('trim', explode("\n", $res['out']))));
+    $ips = [];
+    foreach ($lines as $ln) if (filter_var($ln, FILTER_VALIDATE_IP)) $ips[] = $ln;
+    return array_values(array_unique($ips));
   }
-  // Fallback to PHP DNS
-  $vals = [];
-  switch (strtoupper($type)) {
-    case 'A':
-      $recs = safe_dns_get_record($qname, DNS_A);
-      foreach ($recs as $r) if (!empty($r['ip'])) $vals[] = $r['ip'];
-      break;
-    case 'NS':
-      $recs = safe_dns_get_record($qname, DNS_NS);
-      foreach ($recs as $r) if (!empty($r['target'])) $vals[] = rtrim($r['target'],'.');
-      break;
-    case 'CNAME':
-      $recs = safe_dns_get_record($qname, DNS_CNAME);
-      foreach ($recs as $r) if (!empty($r['target'])) $vals[] = rtrim($r['target'],'.');
-      break;
+  $r = dns_get_record($domain, DNS_A);
+  $ips = [];
+  foreach ($r as $e) if (!empty($e['ip'])) $ips[] = $e['ip'];
+  return array_values(array_unique($ips));
+}
+function dig_ns_exact(string $domain): array {
+  if (is_proc_open_enabled()) {
+    $cmd = sprintf('%s +short NS %s +time=%d +tries=1', DIG_BIN, escapeshellarg($domain), DIG_TIMEOUT_SEC);
+    $res = run_cmd($cmd, DIG_TIMEOUT_SEC);
+    $lines = array_values(array_filter(array_map('trim', explode("\n", $res['out']))));
+    $hosts = [];
+    foreach ($lines as $ln) {
+      $h = rtrim($ln, '.');
+      if ($h !== '') $hosts[] = $h;
+    }
+    return array_values(array_unique($hosts));
   }
-  return array_values(array_unique($vals));
+  $r = dns_get_record($domain, DNS_NS);
+  $hosts = [];
+  foreach ($r as $e) if (!empty($e['target'])) $hosts[] = rtrim($e['target'], '.');
+  return array_values(array_unique($hosts));
 }
-function dig_a(string $host): array {
-  $ips = dig_short($host, 'A');
-  if (!$ips) {
-    $c = dig_short($host, 'CNAME');
-    if (!empty($c[0])) $ips = dig_short(rtrim($c[0],'.'), 'A');
-  }
-  $out = [];
-  foreach ($ips as $ip) if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) $out[] = $ip;
-  return array_values(array_unique($out));
-}
-function dig_ns_exact(string $name): array {
-  $rows = dig_short($name, 'NS');
-  $out = []; foreach ($rows as $r) $out[] = rtrim($r,'.');
-  return array_values(array_unique($out));
-}
-/** NS "nearest": try exact name, else walk up labels until found */
-function dig_ns_nearest(string $name): array {
-  $test = $name;
-  while (true) {
+function dig_ns_chain(string $domain): array {
+  $labels = explode('.', $domain);
+  $n = count($labels);
+  $test = $domain;
+  for ($i = 0; $i < $n; $i++) {
     $ns = dig_ns_exact($test);
     if (!empty($ns)) return $ns;
     $dot = strpos($test, '.');
@@ -226,39 +165,53 @@ function dig_mx(string $domain): array {
     $cmd = sprintf('%s +short MX %s +time=%d +tries=1', DIG_BIN, escapeshellarg($domain), DIG_TIMEOUT_SEC);
     $res = run_cmd($cmd, DIG_TIMEOUT_SEC);
     $lines = array_values(array_filter(array_map('trim', explode("\n", $res['out']))));
-    foreach ($lines as $line) {
-      if (preg_match('~^(\d+)\s+([\w\.-]+)\.?$~', $line, $m)) {
-        $mx[] = ['priority'=>(int)$m[1], 'host'=>rtrim($m[2],'.')];
+    foreach ($lines as $ln) {
+      // "10 mx1.example.com."
+      if (preg_match('~^\s*\d+\s+([a-z0-9.-]+)\.?$~i', $ln, $m)) {
+        $mx[] = ['prio'=>(int)preg_replace('~\D~', '', $ln), 'host'=>rtrim($m[1], '.')];
       }
     }
+    return $mx;
   }
-  if (!$mx) {
-    $recs = safe_dns_get_record($domain, DNS_MX);
-    foreach ($recs as $r) if (!empty($r['target'])) {
-      $mx[] = ['priority'=> (int)($r['pri'] ?? 0), 'host'=> rtrim($r['target'],'.')];
-    }
-  }
-  foreach ($mx as &$rec) { $rec['ips'] = dig_a($rec['host']); }
-  unset($rec);
-  usort($mx, fn($a,$b)=>$a['priority']<=>$b['priority']);
+  $r = dns_get_record($domain, DNS_MX);
+  foreach ($r as $e) $mx[] = ['prio'=>(int)($e['pri'] ?? 0), 'host'=>rtrim((string)($e['target'] ?? ''), '.')];
   return $mx;
 }
 
 /////////////////////////////
-// WHOIS / RDAP helpers
+// WHOIS maps & helpers
 /////////////////////////////
 
-function whois_is_no_match(string $txt): bool {
-  if ($txt === '') return false;
-  return (bool)preg_match(
-    '~(0 objects|No entries found|No existen entradas|no match|not found|no data found|no object found|the queried object does not exist|available for registration)~i',
-    $txt
-  );
+// hostname helpers for SLD mapping (e.g., jp.net, uk.com)
+function host_suffix(string $host, int $labels = 2): string {
+  $parts = explode('.', $host);
+  $n = count($parts);
+  if ($n < $labels) return $host;
+  return implode('.', array_slice($parts, $n - $labels));
 }
 
+//// Maps
+
+//  TLD map (single label TLDs to WHOIS servers)
+const WHOIS_TLD_MAP = [
+  'gg' => 'whois.gg',
+  'je' => 'whois.je',
+  'me' => 'whois.nic.me',
+  'io' => 'whois.nic.io',
+  'es' => 'whois.nic.es',
+];
+
+const WHOIS_SLD_MAP = [
+  'jp.net' => 'whois.centralnic.com',
+  // (optional) other CentralNic SLDs you care about:
+  'uk.com' => 'whois.centralnic.com',
+  'eu.com' => 'whois.centralnic.com',
+];
+
 function whois_suffix_server(string $domain): ?string {
+  // For multi-label suffixes (like jp.net) use SLD map
   $labels = explode('.', strtolower($domain));
-  for ($i = 0; $i < count($labels)-1; $i++) {
+  for ($i = 0; $i + 1 < count($labels); $i++) {
     $suffix = implode('.', array_slice($labels, $i)); // e.g. jp.net, net
     if (isset(WHOIS_SLD_MAP[$suffix])) return WHOIS_SLD_MAP[$suffix];
   }
@@ -286,51 +239,32 @@ function whois_no_match_line(string $txt): ?string {
       '~\bavailable\s+for\s+registration\b~i',
       '~\bhas\s+not\s+been\s+registered\b~i',
 
-      // NEW: ESNIC / .es variants
-      '~\b0\s+objects\b~i',                 // "% This query returned 0 objects."
-      '~\bno\s+existen\s+entradas\b~i',     // Spanish: "No existen entradas ..."
+      // ESNIC / .es variants
+      '~\b0\s+objects\b~i',               // "% This query returned 0 objects."
+      '~\bno\s+existen\s+entradas\b~i',   // "No existen entradas ..."
     ];
     foreach ($patterns as $re) {
       if (preg_match($re, $line)) {
-        return $line; // return the exact matching line (e.g., "No match for "EXAMPLE.TLD"")
+        return $line; // return the exact matching line
       }
     }
   }
   return null;
 }
 
-function whois_tld_referral(string $tld): ?string {
-  // Query IANA for this TLD’s WHOIS record
-  $timeout = defined('WHOIS_TIMEOUT_SEC') ? WHOIS_TIMEOUT_SEC : 5;
+function whois_tld_referral(string $tld, int $timeout = 6): ?string {
+  if ($tld === '') return null;
   $txt = whois_port43('whois.iana.org', $tld, $timeout);
   if ($txt === '') return null;
-
-  // Clean and normalize
-  $txt = trim(preg_replace('/[^\P{C}\n]+/u', '', $txt)); // remove control chars
-  $txt = str_replace("\r", '', $txt);
-
-  // Match "whois:" or "refer:" lines that contain a proper hostname
-  if (preg_match(
-    '~^\s*(?:whois|refer)\s*:\s*([a-z0-9.-]+\.[a-z]{2,})\s*$~im',
-    $txt,
-    $m
-  )) {
-    $ref = strtolower(trim($m[1]));
-
-    // Basic sanity: must contain at least one dot and no spaces
-    if (preg_match('/^[a-z0-9.-]+\.[a-z]{2,}$/i', $ref)) {
-      return $ref;
-    }
+  // IANA uses either "whois:" or "refer:" for the referral field
+  if (preg_match('~^\s*(?:whois|refer)\s*:\s*([a-z0-9.-]+\.[a-z]{2,})~im', $txt, $m)) {
+    return strtolower(trim($m[1]));
   }
-
-  // Nothing valid found
   return null;
 }
 
 function whois_text_domain(string $domain): string {
   $trace =& $GLOBALS['WHOIS_TRACE'];
-
-  // helper
   $push = function(string $method, ?string $server, bool $ok, int $bytes, string $note = '') use (&$trace) {
     $trace[] = [
       'method' => $method,
@@ -346,9 +280,9 @@ function whois_text_domain(string $domain): string {
     $cmd = sprintf('%s -H %s', WHOIS_BIN, escapeshellarg($domain));
     $res = run_cmd($cmd, WHOIS_TIMEOUT_SEC, WHOIS_MAX_BYTES);
     $txt = trim(($res['out'] ?: $res['err']) ?? '');
-    $bad = ($res['exit'] !== 0) || ($txt === '') || stripos($txt, 'not found') !== false;
-    $push('whois-bin', null, !$bad, strlen($txt));
-    if (!$bad) return substr($txt, 0, WHOIS_MAX_BYTES);
+    $ok  = ($res['exit'] === 0) && ($txt !== '');
+    $push('whois-bin', null, $ok, strlen($txt));
+    if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
   }
 
   // 2) SLD-specific server (multi-label suffixes like jp.net -> CentralNic)
@@ -359,27 +293,9 @@ function whois_text_domain(string $domain): string {
     if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
   }
 
-  // 3) Generic IANA referral (works for many TLDs if not in the map)
-  $tld = strtolower(substr($domain, strrpos($domain, '.') + 1));
-  if ($slv = whois_suffix_server($domain)) {
-    // already tried above; nothing to do
-  }
-  if ($srv = whois_tld_referral($tld)) {
-    // sanity: require a plausible hostname
-    if (preg_match('~^[a-z0-9.-]+\.[a-z]{2,}$~i', $srv)) {
-      $txt = whois_port43($srv, $domain);
-      $ok  = trim($txt) !== '';
-      $push('port43-referral', $srv, $ok, strlen($txt));
-      if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
-    } else {
-      $push('port43-referral', $srv, false, 0, 'invalid-referral');
-    }
-  } else {
-    $push('port43-referral', null, false, 0, 'no-referral');
-  }
-
-  // 4) TLD hard map fallback (if you use one)
-  if (defined('WHOIS_TLD_MAP') && isset(WHOIS_TLD_MAP[$tld])) {
+  // 3) TLD-specific server (single-label map like io -> whois.nic.io)
+  $tld = strtolower(substr(strrchr($domain, '.'), 1) ?: '');
+  if ($tld && !empty(WHOIS_TLD_MAP[$tld])) {
     $srv = WHOIS_TLD_MAP[$tld];
     $txt = whois_port43($srv, $domain);
     $ok  = trim($txt) !== '';
@@ -387,9 +303,27 @@ function whois_text_domain(string $domain): string {
     if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
   }
 
-  // Nothing worked
-  $push('port43-none', null, false, 0, 'all-attempts-failed');
-  return '';
+  // 4) Generic IANA referral (fallback when not in our maps)
+  $ref = whois_tld_referral($tld);
+  if ($ref) {
+    // sanity check
+    if (preg_match('~^[a-z0-9.-]+\.[a-z]{2,}$~i', $ref)) {
+      $txt = whois_port43($ref, $domain);
+      $ok  = trim($txt) !== '';
+      $push('port43-referral', $ref, $ok, strlen($txt));
+      if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
+    } else {
+      $push('port43-referral', $ref, false, 0, 'invalid-referral');
+    }
+  } else {
+    $push('port43-referral', null, false, 0, 'no-referral');
+  }
+
+  // 5) RDAP fallback (some ccTLDs won’t have RDAP)
+  $rd = rdap_domain($domain);
+  $txt = $rd ? rdap_domain_textify($rd) : '';
+  $push('rdap', null, $txt !== '', strlen($txt));
+  return $txt;
 }
 
 function whois_text_ip(string $ip): string {
@@ -402,336 +336,180 @@ function whois_text_ip(string $ip): string {
   $rd = rdap_ip($ip);
   return $rd ? rdap_ip_textify($rd) : '';
 }
-function normalize_date(string $s): ?string {
+function normalize_date(string|array $s): ?string {
   $candidates = is_array($s) ? $s : [$s];
-  foreach ($candidates as $one) {
-    $one = trim((string)$one);
-    if ($one === '') continue;
-
-    // remove ordinal suffixes: 1st/2nd/3rd/4th -> 1/2/3/4
-    $one = preg_replace('~\b(\d{1,2})(st|nd|rd|th)\b~i', '$1', $one);
-    // drop the word "at" used in some WHOIS blocks
-    $one = preg_replace('~\bat\b~i', ' ', $one);
-    // collapse spaces
-    $one = preg_replace('~\s+~', ' ', $one);
-
-    // let PHP parse it now
-    $dt = date_create($one);
-    if ($dt) return $dt->format(DATE_ATOM);
+  foreach ($candidates as $x) {
+    $x = trim((string)$x);
+    if ($x === '') continue;
+    $t = strtotime($x);
+    if ($t !== false) return date('c', $t);
   }
   return null;
 }
-function first_nonempty(array $bag, array $keys): ?string {
-  foreach ($keys as $k) { $kk = strtolower($k); if (!empty($bag[$kk][0])) return $bag[$kk][0]; }
-  return null;
-}
 
-/** Clean & de-dup status strings; strip trailing ICANN URLs */
-function clean_statuses(array $arr): array {
-  $out = [];
-  foreach ($arr as $s) {
-    $s = preg_replace('~\s+https?://\S+$~', '', (string)$s);
-    $s = strtolower(preg_replace('~\s+~', ' ', trim($s)));
-    if ($s !== '') $out[] = $s;
-  }
-  $seen=[]; $res=[];
-  foreach ($out as $x) if (!isset($seen[$x])) { $seen[$x]=1; $res[]=$x; }
-  return $res;
-}
-/** Fallback: scan raw WHOIS text for status lines if KV parse missed them */
-function extract_statuses_from_raw(string $txt): array {
-  $out = [];
-  $lines = preg_split('~\R~', $txt) ?: [];
-  $n = count($lines);
-  for ($i = 0; $i < $n; $i++) {
-    $ln = rtrim($lines[$i], "\r\n");
-    if (preg_match('~^\s*(?:domain\s+)?status:\s*(.*)$~i', $ln, $m)) {
-      $first = trim($m[1]);
-      if ($first !== '') {
-        $out[] = $first;
-      } else {
-        // Block style: consume indented lines
-        $j = $i + 1;
-        while ($j < $n) {
-          $next = rtrim($lines[$j], "\r\n");
-          if (preg_match('~^\s+\S~', $next)) {
-            $out[] = trim($next);
-            $j++;
-            continue;
-          }
-          break;
-        }
-        $i = $j - 1;
-      }
-    }
-  }
-  return clean_statuses($out);
-}
+/////////////////////////////
+// WHOIS port-43 & RDAP
+/////////////////////////////
+function whois_port43(string $server, string $query, int $timeout = WHOIS_TIMEOUT_SEC): string {
+  $query = trim($query);
+  if ($server === '' || $query === '') return '';
 
-/** Parse domain WHOIS into registrar, creation, statuses, nameservers */
-function parse_domain_whois(string $txt): array {
-  $lines = preg_split('~\R~', $txt) ?: [];
-  $kv = [];
-  $n = count($lines);
-
-  for ($i = 0; $i < $n; $i++) {
-    $ln = rtrim($lines[$i], "\r\n");
-    if (!preg_match('~^\s*([^:]+?)\s*:\s*(.*)$~', $ln, $m)) continue;
-
-    $key = strtolower(trim($m[1]));
-    $val = trim($m[2]);
-
-    // If the value is blank here, collect following indented lines as the value block
-    if ($val === '') {
-      $block = [];
-      $j = $i + 1;
-      while ($j < $n) {
-        $next = rtrim($lines[$j], "\r\n");
-        if (preg_match('~^\s+\S~', $next)) {          // indented line => continuation
-          $block[] = trim($next);
-          $j++;
-          continue;
-        }
-        break; // next header or blank/non-indented line
-      }
-      $i = $j - 1;
-      if (!empty($block)) {
-        // Some keys are list-like; store each line as a separate value
-        foreach ($block as $b) {
-          $kv[$key][] = $b;
-        }
-        continue;
-      }
-    }
-
-    // Single-line key:value
-    $kv[$key][] = $val;
-  }
-
-  // Registrar (first non-empty of common variants)
-  $registrar = ($kv['registrar'][0] ?? null) ?: ($kv['sponsoring registrar'][0] ?? null)
-             ?: ($kv['registrar name'][0] ?? null) ?: ($kv['registrar organization'][0] ?? null);
-
-  // Creation date — try common keys, or parse from “Relevant dates:” block (e.g., .gg)
-  $created = null;
-  foreach (['creation date','registered on','created','created on','domain registration date','registration time'] as $k) {
-    if (!empty($kv[$k][0])) { $created = $kv[$k][0]; break; }
-  }
-  if (!$created && !empty($kv['relevant dates'])) {
-    // Look for a line like: "Registered on 12th March 2023 at 15:05:34.456"
-    foreach ($kv['relevant dates'] as $rd) {
-      if (preg_match('~registered on\s+(.+)$~i', $rd, $m)) { $created = $m[1]; break; }
-    }
-  }
-
-  // Statuses: from “domain status” or “status” (now populated even if block-style)
-  $statuses = $kv['domain status'] ?? $kv['status'] ?? [];
-
-  // Nameservers: handle both “name server” + “name servers” + “nserver”
-  $nss = [];
-  foreach (['name server','name servers','nserver'] as $k) {
-    if (!empty($kv[$k])) {
-      foreach ($kv[$k] as $ns) $nss[] = rtrim(strtolower($ns), '.');
-    }
-  }
-  $nss = array_values(array_unique(array_filter($nss)));
-
-  // Normalize statuses (strip trailing URLs, lowercase, collapse spaces)
-  $statuses = clean_statuses($statuses);
-
-  return [
-    'registrar'     => $registrar ?: '',
-    'creation_date' => $created ? normalize_date($created) : '',
-    'statuses'      => $statuses,
-    'nameservers'   => $nss,
-  ];
-}
-
-/** Port-43 client */
-function whois_port43(string $server, string $query, int $timeout = 6): string {
   $errno = 0; $errstr = '';
   $fp = @fsockopen($server, 43, $errno, $errstr, $timeout);
   if (!$fp) return '';
   stream_set_timeout($fp, $timeout);
-  fwrite($fp, $query . "\r\n");
-  $out = '';
-  while (!feof($fp)) { $out .= fgets($fp, 8192) ?: ''; }
+
+  // Format query (some servers need special flags)
+  $out = $query . "\r\n";
+  fwrite($fp, $out);
+
+  $buf = '';
+  while (!feof($fp)) {
+    $buf .= fread($fp, 8192);
+    if (strlen($buf) >= WHOIS_MAX_BYTES) break;
+  }
   fclose($fp);
-  return $out;
+  return substr($buf, 0, WHOIS_MAX_BYTES);
 }
 
-/** RDAP */
-function http_get_json(string $url, int $timeout = 8): ?array {
-  $ua = 'DomainInfo/2.0 (+https://example.org)';
-  if (function_exists('curl_init')) {
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-      CURLOPT_RETURNTRANSFER => true,
-      CURLOPT_FOLLOWLOCATION => true,
-      CURLOPT_USERAGENT      => $ua,
-      CURLOPT_CONNECTTIMEOUT => $timeout,
-      CURLOPT_TIMEOUT        => $timeout,
-      CURLOPT_SSL_VERIFYPEER => true,
-      CURLOPT_SSL_VERIFYHOST => 2,
-      CURLOPT_HTTPHEADER     => ['Accept: application/rdap+json, application/json;q=0.9, */*;q=0.8'],
-    ]);
-    $body = curl_exec($ch);
-    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    if ($body !== false && $code >= 200 && $code < 300) {
-      $j = json_decode($body, true);
-      if (is_array($j)) return $j;
-    }
-    return null;
+function rdap_fetch(string $url, int $timeout = 6): ?array {
+  $ua   = HTTP_UA;
+  $host = parse_url($url, PHP_URL_HOST) ?: '';
+
+  // Default SSL opts (strict)
+  $ssl = ['verify_peer' => true, 'verify_peer_name' => true];
+
+  // rdap.nic.es sometimes serves a cert with a mismatched CN.
+  // For JUST this host, relax peer_name verification so we can read the RDAP JSON.
+  if (strcasecmp($host, 'rdap.nic.es') === 0) {
+    $ssl['verify_peer_name'] = false;   // keep verify_peer=true
   }
+
   $ctx = stream_context_create([
     'http' => [
       'method'  => 'GET',
-      'header'  => "User-Agent: $ua\r\nAccept: application/rdap+json, application/json\r\n",
+      'header'  => "User-Agent: $ua\r\nAccept: application/rdap+json, application/json;q=0.9\r\n",
       'timeout' => $timeout,
+      'follow_location' => 1,
+      'max_redirects'   => 3,
     ],
-    'ssl' => ['verify_peer'=>true,'verify_peer_name'=>true],
+    'ssl' => $ssl,
   ]);
-  $body = @file_get_contents($url, false, $ctx);
-  if ($body !== false) {
-    $j = json_decode($body, true);
-    return is_array($j) ? $j : null;
-  }
-  return null;
-}
-function rdap_domain(string $domain): ?array { return http_get_json('https://rdap.org/domain/'.rawurlencode($domain)); }
-function rdap_ip(string $ip): ?array { return http_get_json('https://rdap.org/ip/'.rawurlencode($ip)); }
 
-function rdap_domain_textify(array $j): string {
+  // Temporarily swallow warnings so the global error handler doesn't fatal on TLS notices.
+  $tmpErr = null;
+  $prev = set_error_handler(function($severity, $message) use (&$tmpErr) {
+    $tmpErr = $message;
+    return true; // handled
+  });
+
+  $raw = @file_get_contents($url, false, $ctx);
+
+  if ($prev !== null) set_error_handler($prev);
+  if ($raw === false) return null;
+
+  $j = json_decode($raw, true);
+  return is_array($j) ? $j : null;
+}
+
+function rdap_domain(string $domain): ?array {
+  $tld = strtolower(substr(strrchr($domain, '.'), 1) ?: '');
+  if ($tld === '') return null;
+  // Try IANA bootstrap (static quick map for common TLDs)
+  $rdap = [
+    'com'  => 'https://rdap.verisign.com/com/v1/domain/',
+    'net'  => 'https://rdap.verisign.com/net/v1/domain/',
+    'org'  => 'https://rdap.publicinterestregistry.net/rdap/org/domain/',
+    'io'   => 'https://rdap.nic.io/domain/',
+    'me'   => 'https://rdap.nic.me/domain/',
+    'info' => 'https://rdap.afilias.net/rdap/info/domain/',
+    'es'   => 'https://rdap.nic.es/domain/',
+  ][$tld] ?? null;
+  if (!$rdap) return null;
+  return rdap_fetch($rdap . urlencode($domain));
+}
+function rdap_domain_textify(array $rd): string {
   $lines = [];
-  if (!empty($j['ldhName'])) $lines[] = "Domain: ".$j['ldhName'];
-  if (!empty($j['status'])) foreach ($j['status'] as $s) $lines[] = "Status: ".$s;
-  if (!empty($j['events'])) foreach ($j['events'] as $e) if (!empty($e['eventAction']) && !empty($e['eventDate'])) $lines[] = ucfirst($e['eventAction']).": ".$e['eventDate'];
-  if (!empty($j['nameservers'])) foreach ($j['nameservers'] as $ns) if (!empty($ns['ldhName'])) $lines[] = "Name Server: ".$ns['ldhName'];
-  return implode("\n", $lines);
-}
-function rdap_ip_textify(array $j): string {
-  $lines = [];
-  if (!empty($j['name'])) $lines[] = "NetName: ".$j['name'];
-  if (!empty($j['entities'])) {
-    foreach ($j['entities'] as $ent) {
-      $role = implode(',', $ent['roles'] ?? []);
-      $name = $ent['vcardArray'][1][1][3] ?? ($ent['fn'] ?? null);
-      if ($name) $lines[] = ucfirst($role ?: 'entity').": ".$name;
-    }
+  $name = (string)($rd['ldhName'] ?? '');
+  if ($name !== '') $lines[] = "Domain: $name";
+  if (!empty($rd['status']) && is_array($rd['status'])) {
+    $lines[] = 'Status: ' . implode(', ', $rd['status']);
   }
-  return implode("\n", $lines);
-}
-
-/** Enrich WHOIS gaps from RDAP */
-function enrich_whois_with_rdap_if_missing(array $whois, string $domain): array {
-  $needReg  = empty($whois['registrar']);
-  $needDate = empty($whois['creation_date']);
-  if (!$needReg && !$needDate) return $whois;
-
-  $rd = rdap_domain($domain);
-  if (!$rd) return $whois;
-
-  $used = false;
-
-  if ($needDate && !empty($rd['events'])) {
+  if (!empty($rd['events']) && is_array($rd['events'])) {
     foreach ($rd['events'] as $e) {
       $act = strtolower((string)($e['eventAction'] ?? ''));
-      if (in_array($act, ['registration','registered','create','created'], true) && !empty($e['eventDate'])) {
-        $whois['creation_date'] = $e['eventDate'];
-        $used = true;
-        break;
-      }
+      $dt  = (string)($e['eventDate'] ?? '');
+      if ($act !== '' && $dt !== '') $lines[] = ucfirst($act) . ': ' . $dt;
     }
   }
-
-  if ($needReg && !empty($rd['entities'])) {
+  if (!empty($rd['entities']) && is_array($rd['entities'])) {
     foreach ($rd['entities'] as $ent) {
       $roles = array_map('strtolower', (array)($ent['roles'] ?? []));
       if (in_array('registrar', $roles, true)) {
-        $name = null;
+        $fn = '';
         if (!empty($ent['vcardArray'][1])) {
-          foreach ($ent['vcardArray['] ?? $ent['vcardArray'][1] as $v) {
-            if (($v[0] ?? '') === 'fn' && !empty($v[3])) { $name = $v[3]; break; }
+          foreach ($ent['vcardArray'][1] as $v) {
+            if (($v[0] ?? '') === 'fn' && !empty($v[3])) { $fn = $v[3]; break; }
           }
         }
-        if (!$name && !empty($ent['fn'])) $name = $ent['fn'];
-        if ($name) { $whois['registrar'] = $name; $used = true; break; }
+        if (!$fn && !empty($ent['fn'])) $fn = (string)$ent['fn'];
+        if ($fn !== '') $lines[] = 'Registrar: ' . $fn;
       }
     }
   }
-
-  if ($used) {
-    $GLOBALS['RDAP_LAST'] = [
-      'used'    => true,
-      'excerpt' => rdap_domain_textify($rd),
-      'json'    => $rd, // keep full JSON in memory (not printed unless you add it)
-    ];
-  }
-
-  return $whois;
+  return implode("\n", $lines);
 }
-
-/** Parse org name from classic IP WHOIS text */
-if (!function_exists('parse_ip_org')) {
-  function parse_ip_org(string $txt): ?string {
-    $patterns = [
-      '~^OrgName:\s*(.+)$~im',
-      '~^org-name:\s*(.+)$~im',
-      '~^Org:\s*(.+)$~im',
-      '~^owner:\s*(.+)$~im',
-      '~^responsible:\s*(.+)$~im',
-      '~^organisation:\s*(.+)$~im',
-      '~^descr:\s*(.+)$~im',
-      '~^netname:\s*(.+)$~im', // fallback
-    ];
-    foreach ($patterns as $re) if (preg_match($re, $txt, $m)) return trim($m[1]);
-    return null;
-  }
+function rdap_ip(string $ip): ?array {
+  $v = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? 'v6' : 'v4';
+  $map = [
+    'v4' => 'https://rdap.apnic.net/ip/',
+    'v6' => 'https://rdap.apnic.net/ip/',
+  ];
+  return rdap_fetch($map[$v] . urlencode($ip));
 }
-/** Extract org from IP RDAP JSON */
-function parse_ip_org_from_rdap(array $j): ?string {
-  if (!empty($j['entities'])) {
-    foreach ($j['entities'] as $ent) {
-      $name = null;
-      if (!empty($ent['vcardArray'][1])) {
-        foreach ($ent['vcardArray'][1] as $v) if (($v[0] ?? '') === 'fn' && !empty($v[3])) { $name = $v[3]; break; }
-      }
-      if (!$name && !empty($ent['fn'])) $name = $ent['fn'];
-      if ($name) return $name;
+function rdap_ip_textify(array $rd): string {
+  $lines = [];
+  $name = (string)($rd['name'] ?? '');
+  if ($name !== '') $lines[] = "Network: $name";
+  if (!empty($rd['events'])) {
+    foreach ($rd['events'] as $e) {
+      $act = strtolower((string)($e['eventAction'] ?? ''));
+      $dt  = (string)($e['eventDate'] ?? '');
+      if ($act !== '' && $dt !== '') $lines[] = ucfirst($act) . ': ' . $dt;
     }
   }
-  if (!empty($j['name'])) return $j['name'];
-  return null;
+  return implode("\n", $lines);
 }
 
 /////////////////////////////
-// HTTP probe (HasContent)
+// HTTP helpers
 /////////////////////////////
 function http_fetch_url(string $url, int $timeout = 8): array {
-  $ua = 'DomainInfo/2.0 (+https://example.org)';
+  $ua = HTTP_UA;
   if (function_exists('curl_init')) {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
       CURLOPT_RETURNTRANSFER => true,
       CURLOPT_FOLLOWLOCATION => true,
       CURLOPT_MAXREDIRS      => 5,
-      CURLOPT_USERAGENT      => $ua,
       CURLOPT_CONNECTTIMEOUT => $timeout,
       CURLOPT_TIMEOUT        => $timeout,
-      CURLOPT_SSL_VERIFYPEER => true,
+      CURLOPT_USERAGENT      => $ua,
       CURLOPT_SSL_VERIFYHOST => 2,
-      CURLOPT_HEADER         => false,
+      CURLOPT_SSL_VERIFYPEER => 1,
+      CURLOPT_HTTPHEADER     => ['Accept: text/html,application/xhtml+xml;q=0.9,*/*;q=0.8'],
     ]);
     $body = curl_exec($ch);
     $err  = curl_error($ch);
-    $info = curl_getinfo($ch);
+    $ctype= curl_getinfo($ch, CURLINFO_CONTENT_TYPE) ?: '';
+    $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $final= curl_getinfo($ch, CURLINFO_EFFECTIVE_URL) ?: $url;
     curl_close($ch);
     return [
-      'ok'         => ($body !== false),
-      'status'     => (int)($info['http_code'] ?? 0),
-      'final_url'  => (string)($info['url'] ?? $url),
-      'ctype'      => (string)($info['content_type'] ?? ''),
+      'ok'         => $body !== false && $code > 0,
+      'status'     => $code,
+      'final_url'  => $final,
+      'ctype'      => is_string($ctype) ? $ctype : '',
       'bytes'      => is_string($body) ? strlen($body) : 0,
       'body'       => is_string($body) ? $body : '',
       'error'      => $err,
@@ -749,16 +527,17 @@ function http_fetch_url(string $url, int $timeout = 8): array {
   ]);
   $body = @file_get_contents($url, false, $ctx);
   $meta = $http_response_header ?? [];
-  $status = 0; $ctype = '';
-  foreach ($meta as $hdr) {
-    if (preg_match('~^HTTP/\S+\s+(\d{3})~i', $hdr, $m)) $status = (int)$m[1];
-    if (stripos($hdr, 'Content-Type:') === 0) $ctype = trim(substr($hdr, 13));
+  $code = 0; $ctype = ''; $final = $url;
+  foreach ($meta as $h) {
+    if (preg_match('~^HTTP/[\d.]+\s+(\d+)~i', $h, $m)) $code = (int)$m[1];
+    if (stripos($h, 'Content-Type:') === 0) $ctype = trim(substr($h, strlen('Content-Type:')));
+    if (stripos($h, 'Location:') === 0)     $final = trim(substr($h, strlen('Location:')));
   }
   return [
-    'ok'     => ($body !== false),
-    'status' => $status,
-    'final_url' => $url,
-    'ctype'  => $ctype,
+    'ok'     => $body !== false && $code > 0,
+    'status' => $code,
+    'final_url' => $final,
+    'ctype'  => is_string($ctype) ? $ctype : '',
     'bytes'  => is_string($body) ? strlen($body) : 0,
     'body'   => is_string($body) ? $body : '',
     'error'  => $body === false ? 'fetch failed' : '',
@@ -781,16 +560,29 @@ function http_has_meaningful_content(array $r): bool {
   if (!$r || empty($r['status'])) return false;
   $code = (int)$r['status'];
   if ($code >= 400 || $code === 204) return false;
-  $textLen = html_visible_text_len($r['body'] ?? '');
-  if ($textLen >= 20) return true;
-  if (($r['bytes'] ?? 0) >= 512 && stripos($r['ctype'] ?? '', 'text/') !== false) return true;
-  if (stripos($r['ctype'] ?? '', 'text/html') !== false && preg_match('~<title[^>]*>(.*?)</title>~is', $r['body'] ?? '')) return true;
-  return false;
+  if (stripos((string)($r['ctype'] ?? ''), 'text/html') === false) return false;
+  return html_visible_text_len((string)($r['body'] ?? '')) >= 80;
 }
 
 /////////////////////////////
-// Option registry
+// Parsing helpers
 /////////////////////////////
+function clean_statuses(array $st): array {
+  $out = [];
+  foreach ($st as $x) {
+    $x = strtolower(trim((string)$x));
+    if ($x === '') continue;
+    $x = preg_replace('~\s+~', ' ', $x);
+    $x = preg_replace('~\s*\(.*?\)\s*~', '', $x); // strip comments
+    $out[] = $x;
+  }
+  return array_values(array_unique($out));
+}
+
+/////////////////////////////
+// Options
+/////////////////////////////
+
 $OPTION_REGISTRY = [
   // WHOIS-derived
   'Reg_date' => [
@@ -805,31 +597,26 @@ $OPTION_REGISTRY = [
       $raw = (string)($ctx['whois_raw'] ?? '');
       $st  = clean_statuses($ctx['whois']['statuses'] ?? []);
 
-      // If parsed list is empty but we have raw text, try block-aware fallback
-      if (!$st && $raw !== '') {
-        $st = extract_statuses_from_raw($raw);
+      // If parsed list is empty but we have raw text, try block-aware extraction
+      if (empty($st) && $raw !== '') {
+        $has = function(string $re) use ($raw): bool {
+          // match only in first "Domain Status" block if present
+          $block = $raw;
+          if (preg_match('~^\s*Domain\s+Status\s*:\s*(.+?)(?:^\S|\z)~ims', $raw, $mm)) {
+            $block = $mm[1];
+          }
+          return (bool)preg_match($re, $block);
+        };
+        $out = [];
+        if ($has('~server[\s\-_]*hold~i')) $out[] = 'serverHold';
+        if ($has('~client[\s\-_]*hold~i')) $out[] = 'clientHold';
+
+        // de-dup, preserve order
+        $seen = []; $res = [];
+        foreach ($out as $x) if (!isset($seen[$x])) { $seen[$x]=1; $res[]=$x; }
+        return $res; // [] means "statuses present, but no hold flags"
       }
-
-      // If we *still* have no statuses, report that WHOIS/RDAP didn’t provide them
-      if (!$st) {
-        return ['notFound'];
-      }
-
-      // Detect holds (parsed OR raw fallback)
-      $rawLower = strtolower($raw);
-      $has = function(string $regex) use ($st, $rawLower): bool {
-        foreach ($st as $s) if (preg_match($regex, $s)) return true;
-        return $rawLower !== '' ? (bool)preg_match($regex, $rawLower) : false;
-      };
-
-      $out = [];
-      if ($has('~server[\s\-_]*hold~i')) $out[] = 'serverHold';
-      if ($has('~client[\s\-_]*hold~i')) $out[] = 'clientHold';
-
-      // de-dup, preserve order
-      $seen = []; $res = [];
-      foreach ($out as $x) if (!isset($seen[$x])) { $seen[$x]=1; $res[]=$x; }
-      return $res; // [] means "statuses present, but no hold flags"
+      return $st;
     }
   ],
   'Regist' => [
@@ -837,19 +624,16 @@ $OPTION_REGISTRY = [
     'present' => function(array $ctx): string {
       return $ctx['whois']['registrar'] ?? '';
     }
-  ],'NoMatch' => [
-      'deps' => ['WHOIS'],
-      'present' => function(array $ctx): string {
-        // Try parsed WHOIS text first
-        $raw = (string)($ctx['whois_raw'] ?? '');
-        $line = whois_no_match_line($raw);
-        if ($line !== null) return $line;
-
-        // Optional: if you kept RDAP JSON somewhere, you can mark 404 here.
-        // Otherwise, just return empty string to mean “not not-found”.
-        return '';
-      }
-    ],
+  ],
+  'NoMatch' => [
+    'deps' => ['WHOIS'],
+    'present' => function(array $ctx): string {
+      $raw = (string)($ctx['whois_raw'] ?? '');
+      $line = whois_no_match_line($raw);
+      if ($line !== null) return $line;
+      return '';
+    }
+  ],
 
   // DNS & orgs
   'IP' => [
@@ -861,9 +645,9 @@ $OPTION_REGISTRY = [
   'IP_org' => [
     'deps' => ['A','IP_ORG'],
     'present' => function(array $ctx): array {
-      $orgs = [];
-      foreach (($ctx['ip_owner'] ?? []) as $io) if (!empty($io['org'])) $orgs[] = $io['org'];
-      return array_values(array_unique($orgs));
+      $out = [];
+      foreach (($ctx['a_org'] ?? []) as $ip => $org) $out[] = $org;
+      return array_values(array_unique(array_filter($out, 'strlen')));
     }
   ],
   'NS' => [
@@ -884,211 +668,255 @@ $OPTION_REGISTRY = [
     'deps' => ['MX','IP_ORG'],
     'present' => function(array $ctx): array {
       $out = [];
+      $orgs = $ctx['a_org'] ?? [];
       foreach (($ctx['mx'] ?? []) as $m) {
-        foreach (($m['ip_orgs'] ?? []) as $io) {
-          $ip  = $io['ip'] ?? '';
-          $org = $io['org'] ?? '';
-          if ($ip && $org) $out[] = $ip.' - '.$org;
-        }
+        $ips = dig_a($m['host']);
+        foreach ($ips as $ip) if (!empty($orgs[$ip])) $out[] = $orgs[$ip];
       }
-      // de-dup preserve order
-      $seen=[]; $dedup=[];
-      foreach ($out as $s) if (!isset($seen[$s])) { $seen[$s]=1; $dedup[]=$s; }
-      return $dedup;
+      return array_values(array_unique($out));
     }
   ],
 
-  // HTTP content probe
+  // HTTP
   'HasContent' => [
     'deps' => ['HTTP'],
-    'present' => function(array $ctx): bool {
-      return http_has_meaningful_content($ctx['http'] ?? []);
+    'present' => function(array $ctx): string {
+      return !empty($ctx['http_ok']) && !empty($ctx['http_meaningful']) ? '1' : '';
     }
   ],
 ];
 
 /////////////////////////////
+// Org lookups (IP → org)
+/////////////////////////////
+function ip_org_lookup(string $ip): string {
+  $rd = rdap_ip($ip);
+  if (!$rd) return '';
+  // Try name, else fall back to handle
+  $name = (string)($rd['name'] ?? '');
+  if ($name !== '') return $name;
+  $h = (string)($rd['handle'] ?? '');
+  return $h;
+}
+
+/////////////////////////////
 // Request parsing
 /////////////////////////////
-$input = body_json();
-
-$rawItems = [];
-if (!empty($_GET['domain'])) {
-  $rawItems = [$_GET['domain']];
-} else {
-  $rawItems = $input['domains'] ?? [];
+$body = null;
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+  $body = file_get_contents('php://input');
 }
-if (!is_array($rawItems) || !$rawItems) {
-  echo json_encode(['ok'=>false,'error'=>'POST {"domains":[...],"options":[...]} or GET ?domain=example.com']);
+$inDomains = [];
+$inOptions = [];
+$debugFlag = false;
+
+if (isset($_GET['domain']) && is_string($_GET['domain'])) $inDomains[] = $_GET['domain'];
+if (isset($_GET['__debug'])) $debugFlag = true;
+
+if ($body) {
+  $j = json_decode($body, true);
+  if (is_array($j)) {
+    if (!empty($j['domains']) && is_array($j['domains'])) $inDomains = array_merge($inDomains, $j['domains']);
+    if (!empty($j['options']) && is_array($j['options'])) $inOptions = array_merge($inOptions, $j['options']);
+    if (!empty($j['debug'])) $debugFlag = true;
+  }
+}
+
+$inDomains = array_values(array_unique(array_filter(array_map('trim', $inDomains), 'strlen')));
+if (empty($inDomains)) {
+  echo json_encode(['ok'=>false, 'error'=>'no_input','detail'=>'No domains provided'], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
   exit;
 }
 
-$options = $input['options'] ?? [];
-if (isset($_GET['options']) && is_string($_GET['options'])) {
-  // allow GET testing: ?options=Reg_date,IsSusp
-  $options = array_map('trim', explode(',', $_GET['options']));
-}
-if (!is_array($options) || !$options) {
-  echo json_encode(['ok'=>false,'error'=>'Provide "options" array with UI option names.']);
-  exit;
-}
-
-$debug = !empty($input['debug']) || !empty($_GET['__debug']) || !empty($_GET['debug']);
+$inOptions = array_values(array_unique(array_filter(array_map('trim', $inOptions), 'strlen')));
+// Default options if none provided
+if (empty($inOptions)) $inOptions = ['Reg_date','Regist','IsSusp','IP','NS','MX','HasContent'];
 
 /////////////////////////////
-// Collect deps to compute
+// Main processing
 /////////////////////////////
-$deps = [];
-foreach ($options as $opt) {
-  if (!isset($OPTION_REGISTRY[$opt])) continue;
-  foreach ($OPTION_REGISTRY[$opt]['deps'] as $d) $deps[$d] = true;
-}
-
-/////////////////////////////
-// Per-item processing
-/////////////////////////////
+$ts0 = microtime(true);
 $items = [];
-foreach ($rawItems as $rawInput) {
-  $rawInput = (string)$rawInput;
-  $hostForDns = $rawInput;
-  if (is_full_url($rawInput)) {
-    $p = parse_url($rawInput);
-    $hostForDns = $p['host'] ?? $rawInput;
+
+foreach ($inDomains as $rawDomain) {
+  $norm = strtolower(trim($rawDomain));
+  // extract host from URL if needed
+  if (is_full_url($norm)) {
+    $u = parse_url($norm);
+    $norm = strtolower((string)($u['host'] ?? $norm));
   }
+  $norm = rtrim($norm, '.');
 
-  $norm = normalize_domain($hostForDns);
-  if (!$norm) {
-    // invalid host; still allow HasContent on URL
-    $ctx = [];
-    $dbg = [];
-    if (!empty($deps['HTTP'])) {
-      $ctx['http'] = http_probe_root_or_url($rawInput);
-      if ($debug) $dbg['http'] = [
-        'target'    => $rawInput,
-        'status'    => (int)($ctx['http']['status'] ?? 0),
-        'final_url' => (string)($ctx['http']['final_url'] ?? ''),
-        'ctype'     => (string)($ctx['http']['ctype'] ?? ''),
-        'bytes'     => (int)($ctx['http']['bytes'] ?? 0),
-        'sample'    => clip_str((string)($ctx['http']['body'] ?? ''), 600),
-      ];
-
-    }
-    $fields = [];
-    foreach ($options as $opt) {
-      if (!isset($OPTION_REGISTRY[$opt])) continue;
-      $val = $OPTION_REGISTRY[$opt]['present']($ctx);
-      $fields[$opt] = is_array($val) ? array_values($val) : (is_bool($val) ? $val : (string)$val);
-    }
-    $item = ['domain'=>$rawInput, 'fields'=>$fields];
-    if ($debug && $dbg) $item['debug'] = $dbg;
-    $items[] = $item;
-    continue;
+  $depsNeeded = [];
+  foreach ($inOptions as $opt) {
+    $d = $OPTION_REGISTRY[$opt]['deps'] ?? [];
+    foreach ($d as $dd) $depsNeeded[$dd] = 1;
   }
+  $depsNeeded = array_keys($depsNeeded);
 
-  $ctx = [];
-  $dbg = [];
+  $ctx = ['domain'=>$norm];
+  // Resolve dependencies
+  foreach ($depsNeeded as $dep) {
+    switch ($dep) {
+      case 'WHOIS': {
+        // reset trace for this domain
+        $GLOBALS['WHOIS_TRACE'] = [];
 
-  if (!empty($deps['A'])) {
-    $ctx['a'] = dig_a($norm);
-    if ($debug) $dbg['dig_a'] = $ctx['a'];
-  }
+        $wtxt = whois_text_domain($norm);
+        $ctx['whois_raw'] = $wtxt;
 
-  if (!empty($deps['NS'])) {
-    $ctx['ns'] = dig_ns_nearest($norm);
-    if ($debug) $dbg['dig_ns'] = $ctx['ns'];
-  }
+        // OPTIONAL: detect ES port-43 policy banner
+        if (preg_match('~Conditions of use .* whois service via port 43 .* \.es~i', $wtxt)) {
+          // No actionable WHOIS data; RDAP will be used below to fill gaps.
+        }
+        $parsed = [
+          'registrar'     => '',
+          'creation_date' => '',
+          'statuses'      => [],
+          'nameservers'   => [],
+        ];
 
-  if (!empty($deps['MX'])) {
-    $ctx['mx'] = dig_mx($norm);
-    if ($debug) $dbg['dig_mx'] = $ctx['mx']; // includes hosts + resolved IPs
-  }
-
-  if (!empty($deps['WHOIS'])) {
-    $wtxt = whois_text_domain($norm);
-    $ctx['whois_raw'] = $wtxt;
-    if ($debug) {
-      $dbg['whois_trace'] = $GLOBALS['WHOIS_TRACE'] ?? [];
-      if (!empty($GLOBALS['RDAP_LAST']['used'])) {
-        $dbg['rdap_used']    = true;
-        $dbg['rdap_excerpt'] = clip_str($GLOBALS['RDAP_LAST']['excerpt'] ?? '');
-        // if you also want the full RDAP JSON in debug (careful with size):
-        // $dbg['rdap_json'] = $GLOBALS['RDAP_LAST']['json'] ?? null;
-      }
-    }
-    $ctx['whois'] = parse_domain_whois($wtxt);
-    $ctx['whois'] = enrich_whois_with_rdap_if_missing($ctx['whois'], $norm);
-    if ($debug) $dbg['whois_parsed'] = $ctx['whois'];
-  }
-
-  if (!empty($deps['IP_ORG'])) {
-    // Owners for A IPs (WHOIS with RDAP fallback)
-    $ctx['ip_owner'] = [];
-    foreach (($ctx['a'] ?? []) as $ip) {
-      $t   = whois_text_ip($ip);
-      $org = parse_ip_org($t);
-      if (!$org) {
-        $rd = rdap_ip($ip);
-        if ($rd) $org = parse_ip_org_from_rdap($rd) ?? $org;
-      }
-      $ctx['ip_owner'][] = ['ip'=>$ip, 'org'=>$org];
-      if ($debug) {
-        $dbg['whois_ip'][$ip] = clip_str($t, 2000);
-      }
-    }
-    // Owners for MX IPs
-    if (!empty($ctx['mx'])) {
-      foreach ($ctx['mx'] as &$mx) {
-        $mx['ip_orgs'] = [];
-        $host = $mx['host'] ?? '';
-        foreach (($mx['ips'] ?? []) as $ip) {
-          $t   = whois_text_ip($ip);
-          $org = parse_ip_org($t);
-          if (!$org) {
-            $rd = rdap_ip($ip);
-            if ($rd) $org = parse_ip_org_from_rdap($rd) ?? $org;
+        // quick “no match” early return for parsed extractor
+        $line = whois_no_match_line($wtxt);
+        if ($line === null) {
+          // parse registrar, creation date (very tolerant)
+          if (preg_match('~^\s*Registrar\s*:\s*(.+?)\s*$~im', $wtxt, $m)) {
+            $parsed['registrar'] = trim($m[1]);
+          } elseif (preg_match('~^\s*Sponsoring\s+Registrar\s*:\s*(.+?)\s*$~im', $wtxt, $m)) {
+            $parsed['registrar'] = trim($m[1]);
+          } elseif (preg_match('~^\s*Registrar\s+Name\s*:\s*(.+?)\s*$~im', $wtxt, $m)) {
+            $parsed['registrar'] = trim($m[1]);
           }
-          $mx['ip_orgs'][] = ['ip'=>$ip, 'org'=>$org];
-          if ($debug) {
-            $dbg['whois_mx_ip'][] = ['host'=>$host, 'ip'=>$ip, 'raw'=>clip_str($t, 2000)];
+
+          $cdCandidates = [];
+          if (preg_match('~^\s*(?:Creation Date|Created On|Registered On|Registration Time)\s*:\s*(.+?)\s*$~im', $wtxt, $m)) {
+            $cdCandidates[] = trim($m[1]);
+          }
+          if (preg_match('~^\s*Domain\s+Registration\s+Date\s*:\s*(.+?)\s*$~im', $wtxt, $m)) {
+            $cdCandidates[] = trim($m[1]);
+          }
+          $parsed['creation_date'] = normalize_date($cdCandidates) ?? '';
+
+          // statuses (try “Domain Status:” blocks first)
+          if (preg_match_all('~^\s*Domain\s+Status\s*:\s*(.+?)\s*$~im', $wtxt, $mm)) {
+            $parsed['statuses'] = clean_statuses($mm[1]);
+          } elseif (preg_match('~^\s*Status\s*:\s*(.+?)\s*$~im', $wtxt, $m)) {
+            $parsed['statuses'] = clean_statuses(array_map('trim', preg_split('~\s*,\s*~', $m[1])));
+          }
+
+          // nameservers
+          if (preg_match_all('~^\s*Name\s*Server\s*:\s*([a-z0-9.-]+)\s*$~im', $wtxt, $mm)) {
+            $parsed['nameservers'] = array_values(array_unique(array_map(fn($x)=>strtolower(rtrim($x,'.')), $mm[1])));
           }
         }
-      }
-      unset($mx);
-    }
-  }
 
-  if (!empty($deps['HTTP'])) {
-    $probeTarget = is_full_url($rawInput) ? $rawInput : $norm;
-    $ctx['http'] = http_probe_root_or_url($probeTarget);
-    if ($debug) {
-      $dbg['http'] = [
-        'target'    => $probeTarget,
-        'status'    => (int)($ctx['http']['status'] ?? 0),
-        'final_url' => (string)($ctx['http']['final_url'] ?? ''),
-        'ctype'     => (string)($ctx['http']['ctype'] ?? ''),
-        'bytes'     => (int)($ctx['http']['bytes'] ?? 0),
-        'sample'    => clip_str((string)($ctx['http']['body'] ?? ''), 600),
-      ];
+        // RDAP enrichment (registrar / creation_date only if missing)
+        $rdap_used = false;
+        if (($parsed['registrar'] === '' || $parsed['creation_date'] === '')) {
+          $rd = rdap_domain($norm);
+          if ($rd) {
+            if ($parsed['creation_date'] === '' && !empty($rd['events'])) {
+              foreach ($rd['events'] as $e) {
+                $act = strtolower((string)($e['eventAction'] ?? ''));
+                if (in_array($act, ['registration','registered','create','created'], true) && !empty($e['eventDate'])) {
+                  $parsed['creation_date'] = $e['eventDate'];
+                  $rdap_used = true;
+                  break;
+                }
+              }
+            }
+            if ($parsed['registrar'] === '' && !empty($rd['entities'])) {
+              foreach ($rd['entities'] as $ent) {
+                $roles = array_map('strtolower', (array)($ent['roles'] ?? []));
+                if (in_array('registrar', $roles, true)) {
+                  $name = '';
+                  if (!empty($ent['vcardArray'][1])) {
+                    foreach ($ent['vcardArray'][1] as $v) {
+                      if (($v[0] ?? '') === 'fn' && !empty($v[3])) { $name = $v[3]; break; }
+                    }
+                  }
+                  if (!$name && !empty($ent['fn'])) $name = (string)($ent['fn']);
+                  if ($name !== '') { $parsed['registrar'] = $name; $rdap_used = true; break; }
+                }
+              }
+            }
+            if ($rdap_used) {
+              $GLOBALS['RDAP_LAST'] = [
+                'used'    => true,
+                'excerpt' => rdap_domain_textify($rd),
+              ];
+            } else {
+              $GLOBALS['RDAP_LAST'] = null;
+            }
+          }
+        } else {
+          $GLOBALS['RDAP_LAST'] = null;
+        }
+
+        $ctx['whois'] = $parsed;
+        break;
+      }
+      case 'A': {
+        $ctx['a'] = dig_a($norm);
+        break;
+      }
+      case 'NS': {
+        $ctx['ns'] = dig_ns_chain($norm);
+        break;
+      }
+      case 'MX': {
+        $ctx['mx'] = dig_mx($norm);
+        break;
+      }
+      case 'IP_ORG': {
+        $orgs = [];
+        foreach (dig_a($norm) as $ip) $orgs[$ip] = ip_org_lookup($ip);
+        $ctx['a_org'] = $orgs;
+        break;
+      }
+      case 'HTTP': {
+        $r = http_probe_root_or_url($norm);
+        $ctx['http_ok'] = $r['ok'];
+        $ctx['http_status'] = $r['status'];
+        $ctx['http_meaningful'] = http_has_meaningful_content($r);
+        $ctx['http_final'] = $r['final_url'];
+        $ctx['http_ctype'] = $r['ctype'];
+        break;
+      }
     }
   }
 
   // Present selected fields
   $fields = [];
-  foreach ($options as $opt) {
-    if (!isset($OPTION_REGISTRY[$opt])) continue;
-    $val = $OPTION_REGISTRY[$opt]['present']($ctx);
-    if (is_array($val)) $fields[$opt] = array_values($val);
-    elseif (is_bool($val)) $fields[$opt] = $val;
-    else $fields[$opt] = is_string($val) ? $val : (string)$val;
+  foreach ($inOptions as $opt) {
+    $presenter = $OPTION_REGISTRY[$opt]['present'] ?? null;
+    if (is_callable($presenter)) {
+      $val = $presenter($ctx);
+      $fields[$opt] = $val;
+    }
   }
 
-  $item = ['domain'=>$norm, 'fields'=>$fields];
-  if ($debug && $dbg) $item['debug'] = $dbg;
-  $items[] = $item;
+  // Build debug payload
+  $dbg = null;
+  if ($debugFlag) {
+    $dbg = [
+      'whois_raw_excerpt' => substr((string)($ctx['whois_raw'] ?? ''), 0, 800),
+      'whois_parsed'      => $ctx['whois'] ?? [],
+      'whois_trace'       => $GLOBALS['WHOIS_TRACE'] ?? [],
+      'rdap_used'         => !empty($GLOBALS['RDAP_LAST']['used']),
+      'rdap_excerpt'      => isset($GLOBALS['RDAP_LAST']['excerpt']) ? substr($GLOBALS['RDAP_LAST']['excerpt'], 0, 800) : null,
+      'http_status'       => $ctx['http_status'] ?? null,
+      'http_final'        => $ctx['http_final'] ?? null,
+      'http_ctype'        => $ctx['http_ctype'] ?? null,
+    ];
+  }
+
+  $items[] = [
+    'domain' => $norm,
+    'fields' => $fields,
+    'debug'  => $dbg,
+  ];
 }
 
-echo json_encode([
-  'ok' => true,
-  'query_ms' => round((microtime(true)-$started)*1000),
-  'items' => $items,
-], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT);
+$ms = (int)round((microtime(true) - $ts0) * 1000);
+echo json_encode(['ok'=>true, 'query_ms'=>$ms, 'items'=>$items], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
