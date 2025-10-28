@@ -174,7 +174,7 @@ async function fetchDomainInfo({ endpoint = 'https://test.grasten.org/api/domain
    Formatting (v2 items[])
    ========================= */
 
-function formatDomainInfoPretty(api, uiSelected = []) {
+function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
   const items = Array.isArray(api?.items) ? api.items : [];
   const want = new Set(uiSelected || []);
   const out = [];
@@ -187,10 +187,12 @@ function formatDomainInfoPretty(api, uiSelected = []) {
 
     // Sanitise the suspension list in case it is broken
     let tempSuspArray = []
-    f.IsSusp.forEach((element) => {
-      if (element.match(regSuspended)) tempSuspArray.push(element.match(regSuspended));
-    })
-    f.IsSusp = tempSuspArray;
+    if (f.IsSusp){
+      f.IsSusp.forEach((element) => {
+        if (element.match(regSuspended)) tempSuspArray.push(element.match(regSuspended));
+      })
+      f.IsSusp = tempSuspArray;
+    }
 
     // Domain line (append Reg_date if selected and present)
     if (want.has('Reg_date') && f.Reg_date) {
@@ -209,7 +211,7 @@ function formatDomainInfoPretty(api, uiSelected = []) {
         const orgs = Array.isArray(f.IP_org) ? f.IP_org : [];
         if (ips.length) {
           const orgStr = orgs.length ? ` - ${orgs.join(', ')}` : '';
-          block.push(ips.map(ip => `${ip}${orgStr}`).join('; '));
+          block.push(ips.map(ip => `Hosted on: ${ip}${orgStr}`).join('; '));
         } else if (want.has('IP_org') && orgs.length) {
           block.push(orgs.join(', '));
         } else {
@@ -291,12 +293,16 @@ function formatDomainInfoPretty(api, uiSelected = []) {
       .filter(el => el.checked && !el.disabled)
       .map(el => el.value || el.id.replace(/^checkbox/, ''));
 
+    if (typeof overwrite === "string") secondarySelected = [overwrite];
+
     secondarySelected.forEach(el => {
       if(el === "SecondaryAND") ActiveAND = true;
       else {
         activeFilters[el] = true;
       }
     })
+
+    //console.log(activeFilters, 'activeFilters');
 
     // run only if any filters are selected, true means meets requirements to pass the filter
     if (Object.keys(activeFilters).length) {
@@ -341,7 +347,7 @@ function formatDomainInfoPretty(api, uiSelected = []) {
       //}
 
       // use either OR AND when checking conditions
-      console.log(fres, 'fres')
+      //console.log(fres, 'fres')
       let fresArray = Object.values(fres);
       //console.log(fresArray, "fresarray");
 
@@ -357,7 +363,6 @@ function formatDomainInfoPretty(api, uiSelected = []) {
         }
       }
 
-
       /*if (ActiveAND){
         if ((doesntUsePE !==) || notRegistered) {
           rmCount++;
@@ -371,7 +376,7 @@ function formatDomainInfoPretty(api, uiSelected = []) {
       }*/
     }
 
-    console.log(f, "F")
+    //console.log(f, "F")
     out.push(bjoin);
     rtCount++;
   }
@@ -383,7 +388,7 @@ function formatDomainInfoPretty(api, uiSelected = []) {
    Main button handler
    ========================= */
 
-async function handleFetch(){
+async function handleFetch(overwriteFetchParams, overwriteFilters){
   const btn = document.getElementById("fetchInfo");
   btn.innerText = "Running...";
 
@@ -394,13 +399,19 @@ async function handleFetch(){
   }
 
   try {
-    const ui = getSelectedUiOptions();
+    let ui = getSelectedUiOptions();
     // to receive info if the domain was not found
     ui.push('NoMatch')
     // v2: send UI options directly
+
+    // rewrite params for reparse
+    if (typeof overwriteFetchParams === "string") {
+      ui = [overwriteFetchParams]
+     }
+
     const data = await fetchDomainInfo({ options: ui });
 
-    const formattedData = formatDomainInfoPretty(data, ui);
+    const formattedData = formatDomainInfoPretty(data, ui, overwriteFilters);
     document.getElementById('parserOutput').value = formattedData.text;
     document.getElementById('parserOutputCounter').innerText = `Domains returned: ${formattedData.rtCount}${
       formattedData.rmCount > 0 ? ` | Removed due to selected options: ${formattedData.rmCount}` : ''}`;
@@ -516,6 +527,11 @@ export function findTargets(){
   filteredLinksArray.forEach((el) => {
     window.open(`https://www.google.com/search?q=${el}`);
   });
+}
+
+export function reparse(overwriteOptions, overwriteFilters){
+  parseDomains("domain")
+  handleFetch(overwriteOptions, overwriteFilters);
 }
 
 export { copyCommand, handleFetch, toggleCheckbox };

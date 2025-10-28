@@ -1,5 +1,5 @@
 import './App.scss'
-import {parseDomains, openParsedDomains, findTargets, handleFetch, toggleCheckbox} from "./utils.js";
+import {parseDomains, openParsedDomains, findTargets, handleFetch, toggleCheckbox, reparse} from "./utils.js";
 
 function App() {
 
@@ -110,6 +110,12 @@ function App() {
 
               <button className="parser__topbar__buttons__parsebox__button parser__topbar__buttons__button" id="parseURLs"
                       onClick={()=> parseDomains("url")}>Parse URLs</button>
+
+              <button className="parser__topbar__buttons__parsebox__button parser__topbar__buttons__button" id="reparseReg"
+                      onClick={()=> reparse("Regist", "RegWithUs")}>Reparse registered</button>
+
+              <button className="parser__topbar__buttons__parsebox__button parser__topbar__buttons__button" id="reparseReg"
+                      onClick={()=> reparse("IsSusp", "NotSuspended")}>Reparse not suspended</button>
 
               {/*<div className="parser__topbar__buttons__button parser__topbar__buttons__split
               parser__topbar__buttons__openbox__button" id="parseOpen">

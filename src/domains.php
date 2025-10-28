@@ -692,11 +692,30 @@ $OPTION_REGISTRY = [
 function ip_org_lookup(string $ip): string {
   $rd = rdap_ip($ip);
   if (!$rd) return '';
-  // Try name, else fall back to handle
+
+  // 1) Prefer the organization/registrant entity name
+  if (!empty($rd['entities']) && is_array($rd['entities'])) {
+    foreach ($rd['entities'] as $ent) {
+      $roles = array_map('strtolower', (array)($ent['roles'] ?? []));
+      if (array_intersect($roles, ['registrant','organization','org','owner'])) {
+        // vCard FN is the canonical display name
+        $org = '';
+        if (!empty($ent['vcardArray'][1])) {
+          foreach ($ent['vcardArray'][1] as $v) {
+            if (($v[0] ?? '') === 'fn' && !empty($v[3])) { $org = (string)$v[3]; break; }
+          }
+        }
+        if ($org === '' && !empty($ent['fn']))   $org = (string)$ent['fn'];
+        if ($org === '' && !empty($ent['name'])) $org = (string)$ent['name'];
+        if ($org !== '') return $org;
+      }
+    }
+  }
+
+  // 2) Fallback: network name (NetName) or handle
   $name = (string)($rd['name'] ?? '');
   if ($name !== '') return $name;
-  $h = (string)($rd['handle'] ?? '');
-  return $h;
+  return (string)($rd['handle'] ?? '');
 }
 
 /////////////////////////////
