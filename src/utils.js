@@ -8,8 +8,10 @@ linkify.tlds(tlds);
 linkify.tlds(SLTLDs);
 
 let filteredLinksArray = [];
-const regBracketDotText = /(\s?\W\s?)dot(\s?\W\s?)/ig;
-const regBracketDot = /(\s?\W\s?)\.(\s?\W\s?)/ig;
+//const regBracketDotText = /(\s?\W\s?)dot(\s?\W\s?)/ig;
+const regBracketDotText = /([ \t]?[^\w\s][ \t]?)dot([ \t]?[^\w\s][ \t]?)/ig;
+//const regBracketDot = /(\s?\W\s?)\.(\s?\W\s?)/ig;
+const regBracketDot = /([ \t]?[^\w\s][ \t]?)\.([ \t]?[^\w\s][ \t]?)/ig;
 const regDomains = /(?<=^|[^a-z0-9])((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[^a-z0-9]|$)/gi;
 const regDomainsExtended = /(https?:\/\/)?(?<=^|[^a-z0-9])((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[^a-z0-9]|$)(\S+)?/gi;
 const regHxxps = /hxxps\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
@@ -61,13 +63,16 @@ function getDomains(type) {
   let worklist = getInputText();
   worklist = worklist.match(regDomains) || [];
   worklist = [...new Set(worklist)];
+  //console.clear()
+  //console.log(worklist, "worklist received");
 
   const tempArray = [];
   worklist.forEach((domain) => {
+    //console.log(domain, "123");
     const el = parse(domain);
     if (el.isIcann && el.domain && !SLTLDs.includes(el.hostname)) {
       if (SLTLDs.includes(el.domain)){
-        const tempRegExp = new RegExp(`.+\\.${el.domain}`, "gm");
+        const tempRegExp = new RegExp(`\\w+\\.${el.domain}`, "gm");
         el.domain = el.hostname.match(tempRegExp)[0];
       }
       tempArray.push(el);
@@ -83,24 +88,23 @@ function getDomains(type) {
 function getLinks() {
   let worklist = getInputText();
   const urls = [];
-  console.clear();
+  //console.clear();
   //console.log(worklist, 'worklist');
 
   // optionally include hostnames if parse URLS with hostnames checkbox selected
   if (document.getElementById("checkboxParseURLsHostnames").checked){
     worklist = worklist.match(regDomainsExtended) || [];
-    console.log(worklist, 'worklist after exteneded');
+    //console.log(worklist, 'worklist after exteneded');
     worklist = [...new Set(worklist)];
 
     const tempArray = [];
     worklist.forEach((domain) => {
 
-      console.log(domain, 'url domain');
-
+      //console.log(domain);
       // parse as link if http or https present
       if (domain.match(/https?:\/\//gi)) {
         tempArray.push(linkify.match(domain)[0]);
-        console.log(linkify.match(domain), 'linkifyMatchHttps');
+        //console.log(linkify.match(domain), 'linkifyMatchHttps');
         return;
       }
 
@@ -113,6 +117,8 @@ function getLinks() {
         }
         //Adapted to getLinks method
         el.text = el.domain;
+        //Add subfolder if present
+        el.text += ((/(\w\/)(.+)/).exec(domain) ? `/${(/(\w\/)(.+)/).exec(domain)[2]}` : false) || '';
         tempArray.push(el);
       }
     });
@@ -125,10 +131,10 @@ function getLinks() {
   worklist = [...new Set(worklist)];
 
   worklist.forEach((m) => {
-    if (!m.text.includes("@")) {
+    //if (!m.text.includes("@")) {
       const el = parse(m.text);
       if (el.isIcann) urls.push(m.text);
-    }
+    //}
   });
 
   filteredLinksArray = [...new Set(urls)];
@@ -202,10 +208,11 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
     }
 
     // Result build cycle, stop if no match
-    if (f.NoMatch) {
-      block.push(`${f.NoMatch}`);
-    } else {
+    //if (f.NoMatch && false) {
+    //  block.push(`${f.NoMatch}`);
+    //} else {
       // IP / IP_org (single combined line)
+
       if (want.has('IP') || want.has('IP_org')) {
         const ips = Array.isArray(f.IP) ? f.IP : [];
         const orgs = Array.isArray(f.IP_org) ? f.IP_org : [];
@@ -218,6 +225,7 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
           block.push('- Not pointed');
         }
       }
+
       // NS (comma-separated)
       if (want.has('NS')) {
         const ns = Array.isArray(f.NS) ? f.NS : [];
@@ -267,13 +275,16 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
       }
       // Regist
       if (want.has('Regist')) {
-        block.push(f.Regist || 'Registry search failed');
+        block.push(f.Regist ? `Reg with: ${f.Regist}` : 'Registry search failed');
       }
       // HasContent
       if (want.has('HasContent')) {
         block.push(`${f.HasContent ? 'Content present' : '- No content'}`);
       }
-    }
+
+      if (f.NoMatch) block.push(`${f.NoMatch}`);
+
+    //}
 
     let bjoin = block.join('\n') // joing all the built result blocks together
 
@@ -415,6 +426,7 @@ async function handleFetch(overwriteFetchParams, overwriteFilters){
     document.getElementById('parserOutput').value = formattedData.text;
     document.getElementById('parserOutputCounter').innerText = `Domains returned: ${formattedData.rtCount}${
       formattedData.rmCount > 0 ? ` | Removed due to selected options: ${formattedData.rmCount}` : ''}`;
+    return formattedData.text;
   } catch (e) {
     console.error(e);
   } finally {
@@ -531,7 +543,10 @@ export function findTargets(){
 
 export function reparse(overwriteOptions, overwriteFilters){
   parseDomains("domain")
-  handleFetch(overwriteOptions, overwriteFilters);
+  handleFetch(overwriteOptions, overwriteFilters).then(r => {
+    document.getElementById("parserInput").value = r
+    parseDomains("domain")
+  });
 }
 
 export { copyCommand, handleFetch, toggleCheckbox };

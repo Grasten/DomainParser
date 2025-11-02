@@ -182,6 +182,101 @@ function dig_mx(string $domain): array {
 // WHOIS maps & helpers
 /////////////////////////////
 
+function parse_rdap_domain_fields(array $rd): array {
+  $out = [
+    'registrar'      => '',
+    'creation_date'  => '',
+    'statuses'       => [],
+    'suspended'      => false, // derived flag
+  ];
+
+  // Registrar: often in entities with role registrar / sponsoring registrar
+  if (!empty($rd['entities']) && is_array($rd['entities'])) {
+    foreach ($rd['entities'] as $ent) {
+      $roles = array_map('strtolower', (array)($ent['roles'] ?? []));
+      if (array_intersect($roles, ['registrar','sponsoring registrar','sponsor'])) {
+        // vCard FN is canonical name
+        if (!empty($ent['vcardArray'][1])) {
+          foreach ($ent['vcardArray'][1] as $v) {
+            if (($v[0] ?? '') === 'fn' && !empty($v[3])) {
+              $out['registrar'] = (string)$v[3];
+              break 2;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Creation/Registration date: accept several eventAction variants
+  $created = null;
+  foreach ((array)($rd['events'] ?? []) as $ev) {
+    $action = strtolower((string)($ev['eventAction'] ?? ''));
+    if (in_array($action, ['registration','creation','created'], true)) {
+      $created = (string)($ev['eventDate'] ?? '');
+      if ($created !== '') break;
+    }
+  }
+  if (!$created) {
+    // fallback: some servers only expose 'registered'
+    foreach ((array)($rd['events'] ?? []) as $ev) {
+      $action = strtolower((string)($ev['eventAction'] ?? ''));
+      if ($action === 'registered') { $created = (string)($ev['eventDate'] ?? ''); break; }
+    }
+  }
+  if ($created) {
+    $t = strtotime($created);
+    if ($t !== false) $out['creation_date'] = date('c', $t);
+  }
+
+  // Statuses: direct from RDAP
+  $statuses = array_map('strval', (array)($rd['status'] ?? []));
+  $out['statuses'] = $statuses;
+
+  // Suspension heuristic: common “hold/inactive” flags
+  $suspSignals = ['clienthold','serverhold','inactive','redemptionperiod','pendingdelete'];
+  $hasSusp = false;
+  foreach ($statuses as $s) {
+    $k = strtolower(preg_replace('~\s+~', '', $s));
+    if (in_array($k, $suspSignals, true)) { $hasSusp = true; break; }
+  }
+  $out['suspended'] = $hasSusp;
+
+  return $out;
+}
+
+// --- Namecheap fallback WHOIS ---
+// Only for .com/.net/.org-like zones when all normal queries failed.
+function whois_namecheap_fallback(string $domain): string {
+  $txt = whois_port43('whois.namecheap.com', $domain);
+  $txt = trim($txt);
+  if ($txt !== '' && stripos($txt, 'whois server:') === false) {
+    // Looks like real Namecheap data
+    error_log("whois_namecheap_fallback: got {$domain}");
+    return substr($txt, 0, WHOIS_MAX_BYTES);
+  }
+  return '';
+}
+
+// --- Enom fallback WHOIS ---
+// Good as a last-resort for many retail .com/.net/.org/.info/.biz domains.
+function whois_enom_fallback(string $domain): string {
+  $txt = whois_port43('whois.enom.com', $domain);
+  $txt = trim($txt);
+
+  // Return only if it looks like a real Enom response (not an empty stub)
+  // Enom usually includes "Registration Service Provided By:" or "Domain record activated:"
+  if ($txt !== '' &&
+      (stripos($txt, 'Registration Service Provided By') !== false
+       || stripos($txt, 'Domain record') !== false
+       || stripos($txt, 'Registrar: eNom') !== false
+       || stripos($txt, 'whois.enom.com') !== false)) {
+    error_log("whois_enom_fallback: got {$domain}");
+    return substr($txt, 0, WHOIS_MAX_BYTES);
+  }
+  return '';
+}
+
 // hostname helpers for SLD mapping (e.g., jp.net, uk.com)
 function host_suffix(string $host, int $labels = 2): string {
   $parts = explode('.', $host);
@@ -194,12 +289,89 @@ function host_suffix(string $host, int $labels = 2): string {
 
 //  TLD map (single label TLDs to WHOIS servers)
 const WHOIS_TLD_MAP = [
+  // --- original ones ---
   'gg' => 'whois.gg',
   'je' => 'whois.je',
   'me' => 'whois.nic.me',
   'io' => 'whois.nic.io',
   'es' => 'whois.nic.es',
+
+  // --- stable and widely used ccTLDs ---
+  'uk' => 'whois.nic.uk',
+  'co.uk' => 'whois.nic.uk',
+  'org.uk' => 'whois.nic.uk',
+  'ca' => 'whois.cira.ca',
+  'de' => 'whois.denic.de',
+  'fr' => 'whois.nic.fr',
+  'nl' => 'whois.domain-registry.nl',
+  'be' => 'whois.dns.be',
+  'pl' => 'whois.dns.pl',
+  'se' => 'whois.iis.se',
+  'no' => 'whois.norid.no',
+  'dk' => 'whois.dk-hostmaster.dk',
+  'fi' => 'whois.fi',
+  'ch' => 'whois.nic.ch',
+  'li' => 'whois.nic.li',
+  'cz' => 'whois.nic.cz',
+  'sk' => 'whois.sk-nic.sk',
+  'at' => 'whois.nic.at',
+  'hu' => 'whois.nic.hu',
+  'ru' => 'whois.tcinet.ru',
+  'su' => 'whois.tcinet.ru',
+  'by' => 'whois.cctld.by',
+  'ua' => 'whois.ua',
+  'kz' => 'whois.nic.kz',
+  'lt' => 'whois.domreg.lt',
+  'lv' => 'whois.nic.lv',
+  'ee' => 'whois.tld.ee',
+  'is' => 'whois.isnic.is',
+  'nz' => 'whois.srs.net.nz',
+  'au' => 'whois.auda.org.au',
+  'br' => 'whois.registro.br',
+  'ar' => 'whois.nic.ar',
+  'mx' => 'whois.mx',
+  'cl' => 'whois.nic.cl',
+  'co' => 'whois.nic.co',
+  'in' => 'whois.registry.in',
+  'jp' => 'whois.jprs.jp',
+  'kr' => 'whois.kr',
+  'sg' => 'whois.sgnic.sg',
+  'hk' => 'whois.hkirc.hk',
+  'tw' => 'whois.twnic.net.tw',
+  'cn' => 'whois.cnnic.cn',
+  'id' => 'whois.idnic.net.id',
+  'my' => 'whois.mynic.my',
+  'ph' => 'whois.dot.ph',
+  'th' => 'whois.thnic.co.th',
+  'vn' => 'whois.vnnic.vn',
+  'za' => 'whois.registry.net.za',
+
+  // --- classic gTLDs (for completeness; many still support port 43) ---
+  'com' => 'whois.verisign-grs.com',
+  'net' => 'whois.verisign-grs.com',
+  'org' => 'whois.pir.org',
+  'info' => 'whois.afilias.net',
+  'biz' => 'whois.nic.biz',
+  'mobi' => 'whois.dotmobiregistry.net',
+  'name' => 'whois.nic.name',
+  'pro' => 'whois.dotproregistry.net',
+  'tv' => 'whois.nic.tv',
+  'cc' => 'whois.nic.cc',
+
+  // --- newer ccTLDs or RDAP-heavy zones (WHOIS still works for most) ---
+  'us' => 'whois.nic.us',
+  'la' => 'whois.nic.la',
+  'io' => 'whois.nic.io',
+  'ai' => 'whois.nic.ai',
+  'sh' => 'whois.nic.sh',
+  'ac' => 'whois.nic.ac',
+  'fm' => 'whois.nic.fm',
+  'to' => 'whois.tonic.to',
+  'cx' => 'whois.nic.cx',
+  'gs' => 'whois.nic.gs',
+  'ws' => 'whois.website.ws',
 ];
+
 
 const WHOIS_SLD_MAP = [
   'jp.net' => 'whois.centralnic.com',
@@ -208,14 +380,40 @@ const WHOIS_SLD_MAP = [
   'eu.com' => 'whois.centralnic.com',
 ];
 
-function whois_suffix_server(string $domain): ?string {
-  // For multi-label suffixes (like jp.net) use SLD map
-  $labels = explode('.', strtolower($domain));
-  for ($i = 0; $i + 1 < count($labels); $i++) {
-    $suffix = implode('.', array_slice($labels, $i)); // e.g. jp.net, net
-    if (isset(WHOIS_SLD_MAP[$suffix])) return WHOIS_SLD_MAP[$suffix];
+// Polyfill for PHP < 8.0 (if needed). Safe to keep even on newer PHP.
+if (!function_exists('str_ends_with')) {
+  function str_ends_with(string $haystack, string $needle): bool {
+    if ($needle === '') return true;
+    $len = strlen($needle);
+    return substr($haystack, -$len) === $needle;
   }
-  return null;
+}
+
+/**
+ * Return a WHOIS server for multi-label "pseudo-TLD" zones.
+ * CentralNic operates many second-level zones (e.g., *.it.com, *.cn.com, *.uk.net)
+ * that are NOT IANA TLDs. These must go to whois.centralnic.com (port 43).
+ */
+function whois_suffix_server(string $domain): ?string {
+  static $centralnicZones = [
+    // Common CentralNic-operated SLD zones. Add more as you need.
+    'it.com',
+    'cn.com', 'uk.com', 'uk.net', 'us.com', 'eu.com', 'de.com', 'no.com',
+    'jpn.com', 'kr.com', 'ru.com', 'za.com', 'br.com', 'ar.com',
+    'se.com', 'se.net', 'hu.com', 'hu.net', 'uy.com',
+    'co.com', 'gr.com', 'in.net',
+    'gb.com', 'gb.net',
+    'qc.com', 'qc.ca',
+    'com.se', // legacy style in some datasets
+  ];
+
+  $d = strtolower($domain);
+  foreach ($centralnicZones as $z) {
+    if (str_ends_with($d, '.'.$z)) {
+      return 'whois.centralnic.com';
+    }
+  }
+  return null; // not a CentralNic SLD that we know
 }
 
 function whois_no_match_line(string $txt): ?string {
@@ -275,6 +473,24 @@ function whois_text_domain(string $domain): string {
     ];
   };
 
+  // Compute TLD up-front (used by later steps too)
+  $tld = strtolower(substr(strrchr($domain, '.'), 1) ?: '');
+
+  // 0) RDAP (bootstrap via rdap.org) — do this first for gTLDs / most zones
+  // Works for .app, .dev, .group, .support, .doctor, .tours, .repair, .ventures, .news, .services, many ccTLDs, etc.
+  if ($domain !== '') {
+    $rd_org = rdap_fetch_domain($domain);
+    if ($rd_org) {
+      // Reuse your existing textifier so downstream logic stays unchanged
+      $txt = rdap_domain_textify($rd_org);
+      $ok  = trim($txt) !== '';
+      $push('rdap-org', null, $ok, strlen($txt));
+      if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
+    } else {
+      $push('rdap-org', null, false, 0, 'no-json-or-non200');
+    }
+  }
+
   // 1) Try local whois binary first
   if (is_proc_open_enabled()) {
     $cmd = sprintf('%s -H %s', WHOIS_BIN, escapeshellarg($domain));
@@ -285,7 +501,7 @@ function whois_text_domain(string $domain): string {
     if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
   }
 
-  // 2) SLD-specific server (multi-label suffixes like jp.net -> CentralNic)
+  // 2) SLD-specific server (multi-label suffixes like it.com / cn.com / uk.net -> CentralNic)
   if ($srv = whois_suffix_server($domain)) {
     $txt = whois_port43($srv, $domain);
     $ok  = trim($txt) !== '';
@@ -294,7 +510,6 @@ function whois_text_domain(string $domain): string {
   }
 
   // 3) TLD-specific server (single-label map like io -> whois.nic.io)
-  $tld = strtolower(substr(strrchr($domain, '.'), 1) ?: '');
   if ($tld && !empty(WHOIS_TLD_MAP[$tld])) {
     $srv = WHOIS_TLD_MAP[$tld];
     $txt = whois_port43($srv, $domain);
@@ -306,7 +521,6 @@ function whois_text_domain(string $domain): string {
   // 4) Generic IANA referral (fallback when not in our maps)
   $ref = whois_tld_referral($tld);
   if ($ref) {
-    // sanity check
     if (preg_match('~^[a-z0-9.-]+\.[a-z]{2,}$~i', $ref)) {
       $txt = whois_port43($ref, $domain);
       $ok  = trim($txt) !== '';
@@ -319,12 +533,28 @@ function whois_text_domain(string $domain): string {
     $push('port43-referral', null, false, 0, 'no-referral');
   }
 
-  // 5) RDAP fallback (some ccTLDs won’t have RDAP)
+  // 5) RDAP fallback (your existing resolver, useful for ccTLDs your bootstrap didn't cover)
   $rd = rdap_domain($domain);
   $txt = $rd ? rdap_domain_textify($rd) : '';
   $push('rdap', null, $txt !== '', strlen($txt));
   return $txt;
+
+  // 6) Namecheap fallback (for .com / .net / .org retail domains)
+  if (in_array($tld, ['com','net','org','info','biz'], true)) {
+    $txt2 = whois_namecheap_fallback($domain);
+    $ok   = trim($txt2) !== '';
+    $push('port43-namecheap', 'whois.namecheap.com', $ok, strlen($txt2));
+    if ($ok) return $txt2;
+  }
+
+    // 7) Enom fallback (secondary, same gTLD set)
+    $txt3 = whois_enom_fallback($domain);
+    $ok3  = trim($txt3) !== '';
+    $push('port43-enom', 'whois.enom.com', $ok3, strlen($txt3));
+    if ($ok3) return $txt3;
+
 }
+
 
 function whois_text_ip(string $ip): string {
   if (is_proc_open_enabled()) {
@@ -354,22 +584,88 @@ function whois_port43(string $server, string $query, int $timeout = WHOIS_TIMEOU
   $query = trim($query);
   if ($server === '' || $query === '') return '';
 
+  // Skip known-problematic TLDs/hosts if you like:
+  // if (preg_match('/\.es$/i', $query)) return '';
+
   $errno = 0; $errstr = '';
-  $fp = @fsockopen($server, 43, $errno, $errstr, $timeout);
-  if (!$fp) return '';
+  $ctx = stream_context_create(['socket' => ['connect_timeout' => $timeout]]);
+
+  // --- Temporarily suppress your custom error handler just for connect ---
+  $prevHandler = set_error_handler(function () { /* swallow warnings */ });
+  try {
+    $fp = stream_socket_client(
+      "tcp://{$server}:43",
+      $errno,
+      $errstr,
+      $timeout,
+      STREAM_CLIENT_CONNECT,
+      $ctx
+    );
+  } finally {
+    restore_error_handler();
+  }
+
+  // Handle connect failure gracefully (e.g., "No route to host")
+  if ($fp === false || $errno) {
+    // common errno on Linux: 113 = No route to host, 110 = Connection timed out
+    error_log("whois_port43: connect failed to {$server}: {$errstr} (errno {$errno})");
+    return '';
+  }
+
   stream_set_timeout($fp, $timeout);
 
-  // Format query (some servers need special flags)
-  $out = $query . "\r\n";
-  fwrite($fp, $out);
+  // Send query
+  fwrite($fp, $query . "\r\n");
 
+  // Read response
   $buf = '';
   while (!feof($fp)) {
-    $buf .= fread($fp, 8192);
+    $chunk = fread($fp, 8192);
+    if ($chunk === false) break;
+    $buf .= $chunk;
     if (strlen($buf) >= WHOIS_MAX_BYTES) break;
+
+    $meta = stream_get_meta_data($fp);
+    if (!empty($meta['timed_out'])) {
+      error_log("whois_port43: read timed out for {$server}");
+      break;
+    }
   }
   fclose($fp);
+
   return substr($buf, 0, WHOIS_MAX_BYTES);
+}
+
+// --- RDAP lookup helper ---
+// Uses rdap.org as a universal redirector to authoritative RDAP servers
+function rdap_fetch_domain(string $domain): ?array {
+  $url = 'https://rdap.org/domain/' . rawurlencode($domain);
+
+  $ch = curl_init($url);
+  curl_setopt_array($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_FOLLOWLOCATION => true,
+    CURLOPT_MAXREDIRS      => 8,
+    CURLOPT_CONNECTTIMEOUT => 5,
+    CURLOPT_TIMEOUT        => 10,
+    CURLOPT_HTTPHEADER     => [
+      'Accept: application/rdap+json, application/json',
+      'User-Agent: GrastenDomainProbe/1.0 (+test.grasten.org)',
+    ],
+  ]);
+
+  $body = curl_exec($ch);
+  $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+  curl_close($ch);
+
+  if ($code === 200 && $body) {
+    $data = json_decode($body, true);
+    if (is_array($data)) {
+      return $data;
+    }
+  }
+
+  return null; // RDAP unavailable or domain not found
 }
 
 function rdap_fetch(string $url, int $timeout = 6): ?array {
