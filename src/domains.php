@@ -183,67 +183,53 @@ function dig_mx(string $domain): array {
 /////////////////////////////
 
 function parse_rdap_domain_fields(array $rd): array {
-  $out = [
-    'registrar'      => '',
-    'creation_date'  => '',
-    'statuses'       => [],
-    'suspended'      => false, // derived flag
-  ];
+    $out = ['creation_date' => '', 'registrar' => '', 'statuses' => []];
 
-  // Registrar: often in entities with role registrar / sponsoring registrar
-  if (!empty($rd['entities']) && is_array($rd['entities'])) {
-    foreach ($rd['entities'] as $ent) {
-      $roles = array_map('strtolower', (array)($ent['roles'] ?? []));
-      if (array_intersect($roles, ['registrar','sponsoring registrar','sponsor'])) {
-        // vCard FN is canonical name
-        if (!empty($ent['vcardArray'][1])) {
-          foreach ($ent['vcardArray'][1] as $v) {
-            if (($v[0] ?? '') === 'fn' && !empty($v[3])) {
-              $out['registrar'] = (string)$v[3];
-              break 2;
+    // creation date from RDAP events
+    if (!empty($rd['events'])) {
+        foreach ($rd['events'] as $ev) {
+            if (!empty($ev['eventAction'])
+                && in_array($ev['eventAction'], ['registration','registered','create','created'], true)
+                && !empty($ev['eventDate'])) {
+                $out['creation_date'] = normalize_date($ev['eventDate']);
+                break;
             }
-          }
         }
-      }
     }
-  }
 
-  // Creation/Registration date: accept several eventAction variants
-  $created = null;
-  foreach ((array)($rd['events'] ?? []) as $ev) {
-    $action = strtolower((string)($ev['eventAction'] ?? ''));
-    if (in_array($action, ['registration','creation','created'], true)) {
-      $created = (string)($ev['eventDate'] ?? '');
-      if ($created !== '') break;
+    // registrar (from entities → vCard "fn")
+    if (!empty($rd['entities'])) {
+        foreach ($rd['entities'] as $e) {
+            $roles = array_map('strtolower', $e['roles'] ?? []);
+            if (in_array('registrar', $roles, true) || in_array('registrar entity', $roles, true)) {
+                if (!empty($e['vcardArray'][1])) {
+                    foreach ($e['vcardArray'][1] as $vc) {
+                        if (($vc[0] ?? '') === 'fn' && isset($vc[3]) && is_string($vc[3])) {
+                            $out['registrar'] = trim($vc[3]);
+                            break 2;
+                        }
+                    }
+                }
+            }
+        }
     }
-  }
-  if (!$created) {
-    // fallback: some servers only expose 'registered'
-    foreach ((array)($rd['events'] ?? []) as $ev) {
-      $action = strtolower((string)($ev['eventAction'] ?? ''));
-      if ($action === 'registered') { $created = (string)($ev['eventDate'] ?? ''); break; }
+
+    // --- RDAP statuses (robust) ---
+    $st = [];
+    if (!empty($rd['status']) && is_array($rd['status'])) {
+        foreach ($rd['status'] as $s) {
+            if (is_string($s)) {
+                $st[] = $s;
+            } elseif (is_array($s) && isset($s['value']) && is_string($s['value'])) {
+                $st[] = $s['value'];
+            }
+        }
     }
-  }
-  if ($created) {
-    $t = strtotime($created);
-    if ($t !== false) $out['creation_date'] = date('c', $t);
-  }
+    $out['statuses'] = $st;
 
-  // Statuses: direct from RDAP
-  $statuses = array_map('strval', (array)($rd['status'] ?? []));
-  $out['statuses'] = $statuses;
-
-  // Suspension heuristic: common “hold/inactive” flags
-  $suspSignals = ['clienthold','serverhold','inactive','redemptionperiod','pendingdelete'];
-  $hasSusp = false;
-  foreach ($statuses as $s) {
-    $k = strtolower(preg_replace('~\s+~', '', $s));
-    if (in_array($k, $suspSignals, true)) { $hasSusp = true; break; }
-  }
-  $out['suspended'] = $hasSusp;
-
-  return $out;
+    return $out;
 }
+
 
 // --- Namecheap fallback WHOIS ---
 // Only for .com/.net/.org-like zones when all normal queries failed.
@@ -865,6 +851,8 @@ function http_has_meaningful_content(array $r): bool {
 /////////////////////////////
 function clean_statuses(array $st): array {
   $out = [];
+
+  // --- original normalization: lowercase, trim, collapse spaces, remove comments ---
   foreach ($st as $x) {
     $x = strtolower(trim((string)$x));
     if ($x === '') continue;
@@ -872,7 +860,44 @@ function clean_statuses(array $st): array {
     $x = preg_replace('~\s*\(.*?\)\s*~', '', $x); // strip comments
     $out[] = $x;
   }
-  return array_values(array_unique($out));
+
+  // remove duplicates
+  $out = array_values(array_unique($out));
+
+  // --- new step: canonicalize known synonyms / spacing / hyphen variants ---
+  static $map = [
+    'client hold'              => 'clientHold',
+    'client-hold'              => 'clientHold',
+    'clienthold'               => 'clientHold',
+    'server hold'              => 'serverHold',
+    'server-hold'              => 'serverHold',
+    'serverhold'               => 'serverHold',
+    'pending create'           => 'pendingCreate',
+    'pending-create'           => 'pendingCreate',
+    'pendingcreate'            => 'pendingCreate',
+    'pending delete'           => 'pendingDelete',
+    'pending-delete'           => 'pendingDelete',
+    'pendingdelete'            => 'pendingDelete',
+    'pending renew'            => 'pendingRenew',
+    'pendingrenew'             => 'pendingRenew',
+    'pending transfer'         => 'pendingTransfer',
+    'pendingtransfer'          => 'pendingTransfer',
+    'pending update'           => 'pendingUpdate',
+    'pendingupdate'            => 'pendingUpdate',
+    'ok'                       => 'ok',
+    'inactive'                 => 'inactive',
+    'hold'                     => 'hold',
+  ];
+
+  $normalized = [];
+  foreach ($out as $x) {
+    $key = str_replace(['-', '_'], ' ', $x);  // unify separators
+    $key = preg_replace('~\s+~', ' ', $key);
+    $canonical = $map[$key] ?? $map[str_replace(' ', '', $key)] ?? $x;
+    $normalized[$canonical] = true; // use keys to dedupe again
+  }
+
+  return array_keys($normalized);
 }
 
 /////////////////////////////
@@ -1125,47 +1150,37 @@ foreach ($inDomains as $rawDomain) {
           }
         }
 
-        // RDAP enrichment (registrar / creation_date only if missing)
         $rdap_used = false;
-        if (($parsed['registrar'] === '' || $parsed['creation_date'] === '')) {
-          $rd = rdap_domain($norm);
-          if ($rd) {
-            if ($parsed['creation_date'] === '' && !empty($rd['events'])) {
-              foreach ($rd['events'] as $e) {
-                $act = strtolower((string)($e['eventAction'] ?? ''));
-                if (in_array($act, ['registration','registered','create','created'], true) && !empty($e['eventDate'])) {
-                  $parsed['creation_date'] = $e['eventDate'];
-                  $rdap_used = true;
-                  break;
-                }
-              }
+        if ($parsed['registrar'] === '' || $parsed['creation_date'] === '' || empty($parsed['statuses'])) {
+            // Try universal RDAP first, then fall back to static map
+            $rd = rdap_fetch_domain($norm);
+            if (!$rd) {
+                $rd = rdap_domain($norm);
             }
-            if ($parsed['registrar'] === '' && !empty($rd['entities'])) {
-              foreach ($rd['entities'] as $ent) {
-                $roles = array_map('strtolower', (array)($ent['roles'] ?? []));
-                if (in_array('registrar', $roles, true)) {
-                  $name = '';
-                  if (!empty($ent['vcardArray'][1])) {
-                    foreach ($ent['vcardArray'][1] as $v) {
-                      if (($v[0] ?? '') === 'fn' && !empty($v[3])) { $name = $v[3]; break; }
-                    }
-                  }
-                  if (!$name && !empty($ent['fn'])) $name = (string)($ent['fn']);
-                  if ($name !== '') { $parsed['registrar'] = $name; $rdap_used = true; break; }
+
+            if ($rd) {
+                // Parse structured fields directly from RDAP JSON
+                $add = parse_rdap_domain_fields($rd);
+
+                if ($parsed['creation_date'] === '' && !empty($add['creation_date'])) {
+                    $parsed['creation_date'] = $add['creation_date'];
                 }
-              }
-            }
-            if ($rdap_used) {
-              $GLOBALS['RDAP_LAST'] = [
-                'used'    => true,
-                'excerpt' => rdap_domain_textify($rd),
-              ];
+                if ($parsed['registrar'] === '' && !empty($add['registrar'])) {
+                    $parsed['registrar'] = $add['registrar'];
+                }
+                if (empty($parsed['statuses']) && !empty($add['statuses'])) {
+                    // normalize/clean if you already have a helper for this
+                    $parsed['statuses'] = clean_statuses($add['statuses']);
+                }
+
+                $rdap_used = true;
+                $GLOBALS['RDAP_LAST'] = [
+                    'used'    => true,
+                    'excerpt' => rdap_domain_textify($rd),
+                ];
             } else {
-              $GLOBALS['RDAP_LAST'] = null;
+                $GLOBALS['RDAP_LAST'] = null;
             }
-          }
-        } else {
-          $GLOBALS['RDAP_LAST'] = null;
         }
 
         $ctx['whois'] = $parsed;
