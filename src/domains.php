@@ -182,6 +182,99 @@ function dig_mx(string $domain): array {
 // WHOIS maps & helpers
 /////////////////////////////
 
+// Extract a displayable name from an RDAP entity (prefer vCard FN, then ORG, then handle)
+function rdap_entity_name(array $e): ?string {
+  // vCardArray: [["vcard"], [ ["fn", {}, "text", "Name"], ["org", {}, "text", "Org"] ... ]]
+  if (!empty($e['vcardArray'][1]) && is_array($e['vcardArray'][1])) {
+    $fn = ''; $org = '';
+    foreach ($e['vcardArray'][1] as $vc) {
+      if (!is_array($vc) || !isset($vc[0])) continue;
+      if ($vc[0] === 'fn'  && isset($vc[3]) && is_string($vc[3])) { $fn  = trim($vc[3]); if ($fn !== '') break; }
+      if ($vc[0] === 'org' && isset($vc[3]) && is_string($vc[3])) { $org = trim($vc[3]); }
+    }
+    if ($fn !== '') return $fn;
+    if ($org !== '') return $org;
+  }
+  if (!empty($e['handle']) && is_string($e['handle'])) {
+    $h = trim($e['handle']);
+    if ($h !== '') return $h;
+  }
+  return null;
+}
+
+const WHOIS_FALLBACK_SERVERS = [
+  'whois.verisign-grs.com', // useful for many gTLDs even if not .com/.net
+  'whois.namecheap.com',    // registrar whois; often returns usable thin data
+];
+
+// Heuristics: reject empty, rate-limit, or "not supported" stubs
+function whois_try_servers(string $domain, array $servers): ?string {
+  foreach ($servers as $srv) {
+    $txt = whois_raw($srv, $domain, 43, 8);   // reuse your socket WHOIS; keep your timeouts
+    // record in your trace/log, same as elsewhere
+    $ok = whois_is_useful($txt);
+    $trace =& $GLOBALS['WHOIS_TRACE'];
+    $trace[] = ['method' => 'whois', 'server' => $srv, 'ok' => $ok, 'bytes' => is_string($txt) ? strlen($txt) : 0, 'note' => 'fallback'];
+    if ($ok) return $txt;
+  }
+  return null;
+}
+
+function whois_is_useful(?string $txt): bool {
+  if (!is_string($txt)) return false;
+  $t = trim($txt);
+  if ($t === '') return false;
+
+  $lower = strtolower($t);
+
+  // rate limits / non-support
+  if (strpos($lower, 'limit exceeded') !== false) return false;
+  if (strpos($lower, 'query rate') !== false && strpos($lower, 'exceeded') !== false) return false;
+  if (strpos($lower, 'not supported') !== false) return false;
+
+  // registry "no data" banners
+  if (strpos($lower, 'no match') !== false) return false;
+  if (strpos($lower, 'no entries found') !== false) return false;
+  if (strpos($lower, 'not found') !== false) return false;
+  if (strpos($lower, 'object does not exist') !== false) return false;
+
+  // shell / environment errors from whois-bin
+  if (preg_match('~(no such file|command not found|not recognized as an internal|usage:\s*whois)~i', $t)) return false;
+
+  return true;
+}
+
+function whois_bin_available(): bool {
+  return defined('WHOIS_BIN')
+      && is_string(WHOIS_BIN)
+      && WHOIS_BIN !== ''
+      && @is_file(WHOIS_BIN)
+      && @is_executable(WHOIS_BIN);
+}
+
+function centralnic_servers_for(string $domain): array {
+  // Take the last two labels as the "pseudo-TLD" (e.g., it.com, uk.com, us.com)
+  $parts = explode('.', strtolower($domain));
+  if (count($parts) < 3) return [];
+
+  $pseudo = $parts[count($parts)-2] . '.' . $parts[count($parts)-1]; // e.g., it.com
+  return [
+    'whois.nic.' . $pseudo,  // e.g., whois.nic.it.com (works for many CentralNic zones)
+    'whois.centralnic.com',  // CentralNic aggregate WHOIS
+  ];
+}
+
+function iana_whois_bootstrap(string $tld): ?string {
+  $tld = strtolower(trim($tld));
+  if ($tld === '') return null;
+  $resp = whois_raw('whois.iana.org', $tld, 43, 6); // you already have whois_raw or equivalent
+  if (!is_string($resp)) return null;
+  if (preg_match('~^\s*whois:\s*(\S+)\s*$~im', $resp, $m)) {
+    return trim($m[1]);
+  }
+  return null;
+}
+
 function parse_rdap_domain_fields(array $rd): array {
     $out = ['creation_date' => '', 'registrar' => '', 'statuses' => []];
 
@@ -212,6 +305,36 @@ function parse_rdap_domain_fields(array $rd): array {
                 }
             }
         }
+    }
+
+    // If we still didn't find a registrar, infer it from admin/tech/billing (common for .IS)
+    if ($out['registrar'] === '' && !empty($rd['entities']) && is_array($rd['entities'])) {
+      $roleWhitelist = ['registrar','sponsor','sponsoring registrar','registrar entity','administrative','technical','billing'];
+      $cands = [];
+      foreach ($rd['entities'] as $e) {
+        $roles = array_map('strtolower', $e['roles'] ?? []);
+        if (empty($roles)) continue;
+        // any overlap with our whitelist?
+        $pick = false;
+        foreach ($roles as $r) {
+          if (in_array($r, $roleWhitelist, true)) { $pick = true; break; }
+        }
+        if (!$pick) continue;
+
+        $name = rdap_entity_name($e);
+        if ($name) {
+          $cands[] = $name;
+        }
+      }
+      if ($cands) {
+        // choose the most frequent name across admin/tech/billing (for your sample: "NameCheap, Inc.")
+        $freq = array_count_values($cands);
+        arsort($freq);
+        $top = array_key_first($freq);
+        if (is_string($top) && $top !== '') {
+          $out['registrar'] = $top;
+        }
+      }
     }
 
     // --- RDAP statuses (robust) ---
@@ -477,68 +600,80 @@ function whois_text_domain(string $domain): string {
     }
   }
 
-  // 1) Try local whois binary first
-  if (is_proc_open_enabled()) {
-    $cmd = sprintf('%s -H %s', WHOIS_BIN, escapeshellarg($domain));
-    $res = run_cmd($cmd, WHOIS_TIMEOUT_SEC, WHOIS_MAX_BYTES);
-    $txt = trim(($res['out'] ?: $res['err']) ?? '');
-    $ok  = ($res['exit'] === 0) && ($txt !== '');
-    $push('whois-bin', null, $ok, strlen($txt));
-    if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
-  }
-
-  // 2) SLD-specific server (multi-label suffixes like it.com / cn.com / uk.net -> CentralNic)
-  if ($srv = whois_suffix_server($domain)) {
-    $txt = whois_port43($srv, $domain);
-    $ok  = trim($txt) !== '';
-    $push('port43-suffix', $srv, $ok, strlen($txt));
-    if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
-  }
-
-  // 3) TLD-specific server (single-label map like io -> whois.nic.io)
-  if ($tld && !empty(WHOIS_TLD_MAP[$tld])) {
-    $srv = WHOIS_TLD_MAP[$tld];
-    $txt = whois_port43($srv, $domain);
-    $ok  = trim($txt) !== '';
-    $push('port43-map', $srv, $ok, strlen($txt));
-    if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
-  }
-
-  // 4) Generic IANA referral (fallback when not in our maps)
-  $ref = whois_tld_referral($tld);
-  if ($ref) {
-    if (preg_match('~^[a-z0-9.-]+\.[a-z]{2,}$~i', $ref)) {
-      $txt = whois_port43($ref, $domain);
-      $ok  = trim($txt) !== '';
-      $push('port43-referral', $ref, $ok, strlen($txt));
+    // 1) Try local whois binary first
+    if (is_proc_open_enabled() && whois_bin_available()) {
+      $cmd = sprintf('%s -H %s', WHOIS_BIN, escapeshellarg($domain));
+      $res = run_cmd($cmd, WHOIS_TIMEOUT_SEC, WHOIS_MAX_BYTES);
+      $txt = trim(($res['out'] ?: $res['err']) ?? '');
+      $ok  = ($res['exit'] === 0) && whois_is_useful($txt);
+      $push('whois-bin', null, $ok, strlen($txt), $ok ? '' : 'bin-exit='.($res['exit'] ?? -1));
       if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
     } else {
-      $push('port43-referral', $ref, false, 0, 'invalid-referral');
+      $push('whois-bin', null, false, 0, 'bin-missing-or-disabled');
     }
-  } else {
-    $push('port43-referral', null, false, 0, 'no-referral');
-  }
+
+    // 2) SLD-specific server
+    if ($srv = whois_suffix_server($domain)) {
+      $txt = whois_port43($srv, $domain);
+      $ok  = whois_is_useful($txt);                 // <-- was: trim($txt) !== ''
+      $push('port43-suffix', $srv, $ok, strlen($txt));
+      if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
+    }
+
+
+    // 3) TLD-specific server
+    if ($tld && !empty(WHOIS_TLD_MAP[$tld])) {
+      $srv = WHOIS_TLD_MAP[$tld];
+      $txt = whois_port43($srv, $domain);
+      $ok  = whois_is_useful($txt);                 // <-- was: trim($txt) !== ''
+      $push('port43-map', $srv, $ok, strlen($txt));
+      if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
+    }
+
+
+    // 4) Generic IANA referral
+    $ref = whois_tld_referral($tld);
+    if ($ref) {
+      if (preg_match('~^[a-z0-9.-]+\.[a-z]{2,}$~i', $ref)) {
+        $txt = whois_port43($ref, $domain);
+        $ok  = whois_is_useful($txt);               // <-- was: trim($txt) !== ''
+        $push('port43-referral', $ref, $ok, strlen($txt));
+        if ($ok) return substr($txt, 0, WHOIS_MAX_BYTES);
+      } else {
+        $push('port43-referral', $ref, false, 0, 'invalid-referral');
+      }
+    } else {
+      $push('port43-referral', null, false, 0, 'no-referral');
+    }
 
   // 5) RDAP fallback (your existing resolver, useful for ccTLDs your bootstrap didn't cover)
   $rd = rdap_domain($domain);
   $txt = $rd ? rdap_domain_textify($rd) : '';
-  $push('rdap', null, $txt !== '', strlen($txt));
-  return $txt;
+  $ok  = whois_is_useful($txt ?? '');
+  $push('rdap', null, $ok, strlen($txt));
 
-  // 6) Namecheap fallback (for .com / .net / .org retail domains)
-  if (in_array($tld, ['com','net','org','info','biz'], true)) {
-    $txt2 = whois_namecheap_fallback($domain);
-    $ok   = trim($txt2) !== '';
-    $push('port43-namecheap', 'whois.namecheap.com', $ok, strlen($txt2));
-    if ($ok) return $txt2;
+  if ($ok) {
+    return substr($txt, 0, WHOIS_MAX_BYTES);
   }
 
-    // 7) Enom fallback (secondary, same gTLD set)
-    $txt3 = whois_enom_fallback($domain);
-    $ok3  = trim($txt3) !== '';
-    $push('port43-enom', 'whois.enom.com', $ok3, strlen($txt3));
-    if ($ok3) return $txt3;
+  // 6) Namecheap fallback — try for ANY TLD if we still don't have a useful result
+  $txt2 = whois_port43('whois.namecheap.com', $domain);
+  $ok2  = whois_is_useful($txt2 ?? '');
+  $push('port43-namecheap', 'whois.namecheap.com', $ok2, strlen($txt2));
+  if ($ok2) {
+    return substr($txt2, 0, WHOIS_MAX_BYTES);
+  }
 
+  // 7) Enom fallback — secondary registrar fallback (also for ANY TLD)
+  $txt3 = whois_port43('whois.enom.com', $domain);
+  $ok3  = whois_is_useful($txt3 ?? '');
+  $push('port43-enom', 'whois.enom.com', $ok3, strlen($txt3));
+  if ($ok3) {
+    return substr($txt3, 0, WHOIS_MAX_BYTES);
+  }
+
+  // 8) Last resort: return whatever RDAP text we had (possibly empty) to preserve old behavior
+  return substr((string)$txt, 0, WHOIS_MAX_BYTES);
 }
 
 
@@ -1249,4 +1384,35 @@ foreach ($inDomains as $rawDomain) {
 }
 
 $ms = (int)round((microtime(true) - $ts0) * 1000);
-echo json_encode(['ok'=>true, 'query_ms'=>$ms, 'items'=>$items], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+
+// --- Parse input early (but TRACE mode is opt-in) ---
+$domain = strtolower(trim((string)($_GET['domain'] ?? $_POST['domain'] ?? '')));
+$wantTrace = !empty($_GET['trace']); // only special-case when trace=1
+
+// If trace mode is requested, require a domain and short-circuit with a debug JSON
+if ($wantTrace) {
+  if ($domain === '') {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['ok' => false, 'error' => 'trace_requires_domain'], JSON_UNESCAPED_SLASHES);
+    exit;
+  }
+
+  // Clear trace and run a single-domain WHOIS lookup for debugging
+  $GLOBALS['WHOIS_TRACE'] = [];
+  $txt = whois_text_domain($domain);
+
+  header('Content-Type: application/json; charset=utf-8');
+  echo json_encode([
+    'ok'         => true,
+    'domain'     => $domain,
+    'bytes'      => strlen((string)$txt),
+    'trace'      => $GLOBALS['WHOIS_TRACE'] ?? [],
+    'whois_head' => substr((string)$txt, 0, 500),
+  ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+  exit;
+}
+
+// --- Normal API path (unchanged) ---
+$ms = (int)round((microtime(true) - $ts0) * 1000);
+// DO NOT require $domain here — your existing logic populates $items etc.
+echo json_encode(['ok' => true, 'query_ms' => $ms, 'items' => $items], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
