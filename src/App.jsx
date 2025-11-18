@@ -71,7 +71,7 @@ function App() {
           <div className="parser__topbar__container">
             <h1 className="parser__topbar__container__title font-bebas">
               Domain parser
-              <span className="parser__topbar__container__title__version">ver: 0.4.2</span>
+              <span className="parser__topbar__container__title__version">ver: 0.5: API adventures</span>
             </h1>
             <button className="parser__topbar__container__theme"
                     onClick={() => {

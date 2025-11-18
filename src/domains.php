@@ -182,6 +182,37 @@ function dig_mx(string $domain): array {
 // WHOIS maps & helpers
 /////////////////////////////
 
+// Return a displayable holder/organization name from an IP WHOIS text.
+// Tries common RIR fields in priority order; falls back to first "descr:".
+// Returns null if nothing found.
+function ip_whois_label_from_text(string $txt): ?string {
+  $patterns = [
+    // ARIN
+    '~^\s*OrgName:\s*(.+?)\s*$~im',
+    '~^\s*Organization:\s*(.+?)\s*$~im',
+    '~^\s*CustName:\s*(.+?)\s*$~im',
+    '~^\s*NetName:\s*(.+?)\s*$~im',
+    // RIPE/APNIC/AFRINIC
+    '~^\s*org-name:\s*(.+?)\s*$~im',
+    '~^\s*netname:\s*(.+?)\s*$~im',
+    // LACNIC
+    '~^\s*owner:\s*(.+?)\s*$~im',
+    '~^\s*ownerid:\s*(.+?)\s*$~im',
+  ];
+  foreach ($patterns as $re) {
+    if (preg_match($re, $txt, $m)) {
+      $name = trim($m[1]);
+      if ($name !== '') return preg_replace('~\s+~', ' ', $name);
+    }
+  }
+  // last-resort: first descr line (RIPE/APNIC often have good org names here)
+  if (preg_match('~^\s*descr:\s*(.+?)\s*$~im', $txt, $m)) {
+    $name = trim($m[1]);
+    if ($name !== '') return preg_replace('~\s+~', ' ', $name);
+  }
+  return null;
+}
+
 // Extract a displayable name from an RDAP entity (prefer vCard FN, then ORG, then handle)
 function rdap_entity_name(array $e): ?string {
   // vCardArray: [["vcard"], [ ["fn", {}, "text", "Name"], ["org", {}, "text", "Org"] ... ]]
@@ -454,6 +485,7 @@ const WHOIS_TLD_MAP = [
   'th' => 'whois.thnic.co.th',
   'vn' => 'whois.vnnic.vn',
   'za' => 'whois.registry.net.za',
+  'it' => 'whois.nic.it',
 
   // --- classic gTLDs (for completeness; many still support port 43) ---
   'com' => 'whois.verisign-grs.com',
@@ -1145,33 +1177,91 @@ $OPTION_REGISTRY = [
 /////////////////////////////
 // Org lookups (IP → org)
 /////////////////////////////
-function ip_org_lookup(string $ip): string {
-  $rd = rdap_ip($ip);
-  if (!$rd) return '';
+// Fetch raw WHOIS text for an IP address (port-43).
+// Uses the same socket logic as whois_port43() but targets the regional RIR WHOIS.
+function whois_port43_ip(string $ip): string {
+  $ip = trim($ip);
+  if ($ip === '') return '';
 
-  // 1) Prefer the organization/registrant entity name
-  if (!empty($rd['entities']) && is_array($rd['entities'])) {
-    foreach ($rd['entities'] as $ent) {
-      $roles = array_map('strtolower', (array)($ent['roles'] ?? []));
-      if (array_intersect($roles, ['registrant','organization','org','owner'])) {
-        // vCard FN is the canonical display name
-        $org = '';
-        if (!empty($ent['vcardArray'][1])) {
-          foreach ($ent['vcardArray'][1] as $v) {
-            if (($v[0] ?? '') === 'fn' && !empty($v[3])) { $org = (string)$v[3]; break; }
+  // Choose a default RIR WHOIS server.
+  // whois.iana.org usually redirects us, but each RIR works too.
+  $servers = [
+    'whois.arin.net',     // North America
+    'whois.ripe.net',     // Europe/Middle East/Central Asia
+    'whois.apnic.net',    // Asia-Pacific
+    'whois.lacnic.net',   // Latin America
+    'whois.afrinic.net',  // Africa
+  ];
+
+  // Try each server until we get a non-empty response
+  foreach ($servers as $srv) {
+    $txt = whois_port43($srv, $ip);
+    if (is_string($txt) && trim($txt) !== '') {
+      return $txt;
+    }
+  }
+
+  return '';
+}
+
+function ip_org_lookup(string $ip): string {
+  // 1) Regular WHOIS (OrgName / org-name / owner / NetName / descr)
+  $whoisTxt = whois_port43_ip($ip); // твій існуючий порт-43 фетчер
+  if (is_string($whoisTxt) && $whoisTxt !== '') {
+    $org = ip_whois_label_from_text($whoisTxt);
+    if ($org !== null && $org !== '') return $org;
+  }
+
+  // 2)  RDAP entity vCard FN (із легким фільтром «рольових» назв)
+  $rd = rdap_ip($ip);
+  if (is_array($rd)) {
+    // FN з entity (врахуй, що деякі RDAP дають role-подібні FN; відсічемо найочевидніше)
+    $looksRoley = static function(string $s): bool {
+      $s = strtolower(trim($s));
+      // залишаємо NOC/Cloudflare NOC (це часто легітимна назва підрозділу),
+      // але відсікаємо чисті "Abuse Role", "Hostmaster Role" тощо
+      if (preg_match('~\bnoc\b~i', $s)) return false;
+      return (bool)preg_match('~\b(?:abuse|hostmaster)\b.*\brole\b$~i', $s);
+    };
+
+    if (!empty($rd['entities']) && is_array($rd['entities'])) {
+      foreach ($rd['entities'] as $e) {
+        if (!empty($e['vcardArray'][1]) && is_array($e['vcardArray'][1])) {
+          foreach ($e['vcardArray'][1] as $vc) {
+            if (($vc[0] ?? '') === 'fn' && isset($vc[3]) && is_string($vc[3])) {
+              $fn = trim($vc[3]);
+              if ($fn !== '' && !$looksRoley($fn)) {
+                return $fn;
+              }
+            }
           }
         }
-        if ($org === '' && !empty($ent['fn']))   $org = (string)$ent['fn'];
-        if ($org === '' && !empty($ent['name'])) $org = (string)$ent['name'];
-        if ($org !== '') return $org;
+      }
+    }
+
+    // RDAP top-level name
+    if (!empty($rd['name']) && is_string($rd['name'])) {
+      $name = trim($rd['name']);
+      if ($name !== '' && !preg_match('~^\d+(?:\.\d+){3}\s*-\s*\d+(?:\.\d+){3}$~', $name)) {
+        return $name;
+      }
+    }
+
+    // fallback to remarks.description
+    if (!empty($rd['remarks']) && is_array($rd['remarks'])) {
+      foreach ($rd['remarks'] as $rm) {
+        foreach ((array)($rm['description'] ?? []) as $line) {
+          $line = trim((string)$line);
+          if ($line === '') continue;
+          if (preg_match('~^(?:https?://|AS\d+|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)~i', $line)) continue;
+          return $line;
+        }
       }
     }
   }
 
-  // 2) Fallback: network name (NetName) or handle
-  $name = (string)($rd['name'] ?? '');
-  if ($name !== '') return $name;
-  return (string)($rd['handle'] ?? '');
+  // 3) nothing found
+  return '';
 }
 
 /////////////////////////////

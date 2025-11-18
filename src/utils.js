@@ -18,6 +18,7 @@ const regHxxps = /hxxps\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
 const regHxxp = /hxxp\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
 const regSemicolon = / ?\[:] ?/gi;
 const regSuspended = /serverHold|clientHold|Inactive|notFound/i;
+const regMailNewlines = /(=\s?\n)/i;
 
 /* =========================
    UI helpers
@@ -55,6 +56,7 @@ function getInputText(){
   worklist = worklist.replace(regHxxps, "https://");
   worklist = worklist.replace(regHxxp, "http://");
   worklist = worklist.replace(regSemicolon, ":");
+  worklist = worklist.replace(regMailNewlines, "");
   return worklist;
 }
 
@@ -72,8 +74,10 @@ function getDomains(type) {
     const el = parse(domain);
     if (el.isIcann && el.domain && !SLTLDs.includes(el.hostname)) {
       if (SLTLDs.includes(el.domain)){
-        const tempRegExp = new RegExp(`\\w+\\.${el.domain}`, "gm");
-        el.domain = el.hostname.match(tempRegExp)[0];
+        const tempRegExp = new RegExp(`(?:\\.)?([^.]+\\.${el.domain})`, "gm");
+        //console.log(el)
+        //console.log(tempRegExp.exec(el.hostname))
+        el.domain = tempRegExp.exec(el.hostname)[1];
       }
       tempArray.push(el);
     }
@@ -112,13 +116,16 @@ function getLinks() {
       const el = parse(domain);
       if (el.isIcann && el.domain && !SLTLDs.includes(el.hostname)) {
         if (SLTLDs.includes(el.domain)){
-          const tempRegExp = new RegExp(`.+\\.${el.domain}`, "gm");
-          el.domain = el.hostname.match(tempRegExp)[0];
+          const tempRegExp = new RegExp(`(?:\\.)?([^.]+\\.${el.domain})`, "gm");
+          el.domain = tempRegExp.exec(el.hostname)[1];
         }
-        //Adapted to getLinks method
-        el.text = el.domain;
-        //Add subfolder if present
-        el.text += ((/(\w\/)(.+)/).exec(domain) ? `/${(/(\w\/)(.+)/).exec(domain)[2]}` : false) || '';
+
+        // check for subfolder and add it if it is present
+        let subfolder = (/(\w\/)([-a-zA-Z0-9@:%_+.~#?&/=]+)/).exec(domain)
+        if (subfolder){
+          el.text = el.hostname + '/' + subfolder[2];
+        } else el.text = el.hostname;
+
         tempArray.push(el);
       }
     });
@@ -199,6 +206,7 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
       })
       f.IsSusp = tempSuspArray;
     }
+    console.log(f)
 
     // Domain line (append Reg_date if selected and present)
     if (want.has('Reg_date') && f.Reg_date) {
@@ -218,9 +226,9 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
         const orgs = Array.isArray(f.IP_org) ? f.IP_org : [];
         if (ips.length) {
           const orgStr = orgs.length ? ` - ${orgs.join(', ')}` : '';
-          block.push(ips.map(ip => `Hosted on: ${ip}${orgStr}`).join('; '));
+          block.push("Hosted on: " + ips.map(ip => `${ip}${orgStr}`).join('; '));
         } else if (want.has('IP_org') && orgs.length) {
-          block.push(orgs.join(', '));
+          block.push("Hosted on: " + orgs.join(', '));
         } else {
           block.push('- Not pointed');
         }
@@ -229,36 +237,9 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
       // NS (comma-separated)
       if (want.has('NS')) {
         const ns = Array.isArray(f.NS) ? f.NS : [];
-        block.push(ns.length ? ns.join(', ') : '- No NS');
+        block.push(ns.length ? "NS: " + ns.join(', ') : '- No NS');
       }
-      // MX (combine host with matching MX_org by index when possible)
-      if (want.has('MX') || want.has('MX_org')) {
-        const mxHosts = Array.isArray(f.MX) ? f.MX : [];
-        const mxOrgs = Array.isArray(f.MX_org) ? f.MX_org : [];
 
-        // Always show the MX header if either option is selected
-        //block.push(`${mxHosts.length ? 'MX:' : '- No MX'}`);
-
-        if (mxHosts.length && mxOrgs.length) {
-          // Pair by index; if lengths differ, fall back gracefully
-          const n = Math.max(mxHosts.length, mxOrgs.length);
-          for (let i = 0; i < n; i++) {
-            const host = mxHosts[i] ?? mxHosts[mxHosts.length - 1] ?? '';
-            const org = mxOrgs[i] ?? '';
-            if (host && org) block.push(`${host}: ${org}`);
-            else if (host) block.push(host);
-            else if (org) block.push(org);
-          }
-        } else if (mxHosts.length) {
-          // Only hosts available
-          mxHosts.forEach(h => block.push(h));
-        } else if (mxOrgs.length) {
-          // Only IP-org entries available
-          mxOrgs.forEach(s => block.push(s));
-        } else {
-          block.push('- No MX');
-        }
-      }
       // IsSusp (exact phrasing)
       if (want.has('IsSusp')) {
         let holds = [];
@@ -282,7 +263,37 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
         block.push(`${f.HasContent ? 'Content present' : '- No content'}`);
       }
 
-      if (f.NoMatch) block.push(`${f.NoMatch}`);
+    // MX (combine host with matching MX_org by index when possible)
+    if (want.has('MX') || want.has('MX_org')) {
+      const mxHosts = Array.isArray(f.MX) ? f.MX : [];
+      const mxOrgs = Array.isArray(f.MX_org) ? f.MX_org : [];
+
+      // Always show the MX header if either option is selected
+      block.push(`${mxHosts.length ? 'MX nameserver / service owner' : '-No MX-'}`);
+      //console.log(f.MX, f.MX_org, "mxdata")
+
+      if (mxHosts.length && mxOrgs.length) {
+        // Pair by index; if lengths differ, fall back gracefully
+        const n = Math.max(mxHosts.length, mxOrgs.length);
+        for (let i = 0; i < n; i++) {
+          const host = mxHosts[i] ?? mxHosts[mxHosts.length - 1] ?? '';
+          const org = mxOrgs[i] ?? '';
+          if (host && org) block.push(`${host} - ${org}`);
+          else if (host) block.push(host);
+          else if (org) block.push(org);
+        }
+      } else if (mxHosts.length) {
+        // Only hosts available
+        mxHosts.forEach(h => block.push(h));
+      } else if (mxOrgs.length) {
+        // Only IP-org entries available
+        mxOrgs.forEach(s => block.push(s));
+      } else {
+        //block.push('- No MX');
+      }
+    }
+
+    if (f.NoMatch) block.push(`${f.NoMatch}`);
 
     //}
 
