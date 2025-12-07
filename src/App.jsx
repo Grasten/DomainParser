@@ -95,7 +95,7 @@ function App() {
             <div className="parser__topbar__inputs__box">
               <button className="parser__topbar__inputs__box__clear"
                       onClick={() => document.getElementById("parserInput").value = ""}>Clear</button>
-              <textarea className="parser__topbar__inputs__box__input parser-fields" id="parserInput"
+              <textarea spellCheck="false" className="parser__topbar__inputs__box__input parser-fields" id="parserInput"
                         defaultValue=""></textarea>
             </div>
 
@@ -199,7 +199,7 @@ function App() {
         </div>
 
         <label>
-          <textarea className="parser__output parser-fields" id="parserOutput"></textarea>
+          <textarea spellCheck="false" className="parser__output parser-fields" id="parserOutput"></textarea>
         </label>
         <p className="parser__output__counter" id="parserOutputCounter">Number of links:</p>
 

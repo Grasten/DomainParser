@@ -18,7 +18,7 @@ const regHxxps = /hxxps\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
 const regHxxp = /hxxp\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
 const regSemicolon = / ?\[:] ?/gi;
 const regSuspended = /serverHold|clientHold|Inactive|notFound/i;
-const regMailNewlines = /(=\s?\n)/i;
+const regMailNewlines = /(=\s?\n)(?!google\.com)/i;
 
 /* =========================
    UI helpers
@@ -269,7 +269,7 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
       const mxOrgs = Array.isArray(f.MX_org) ? f.MX_org : [];
 
       // Always show the MX header if either option is selected
-      block.push(`${mxHosts.length ? 'MX nameserver / service owner' : '-No MX-'}`);
+      block.push(`${mxHosts.length ? '-- MX nameserver / service owner --' : '-No MX-'}`);
       //console.log(f.MX, f.MX_org, "mxdata")
 
       if (mxHosts.length && mxOrgs.length) {
@@ -293,7 +293,7 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
       }
     }
 
-    if (f.NoMatch) block.push(`${f.NoMatch}`);
+    if (f.NoMatch) block.push(`Possibly not reg: ${f.NoMatch}`);
 
     //}
 

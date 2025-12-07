@@ -58,6 +58,7 @@ register_shutdown_function(function () {
 /////////////////////////////
 $GLOBALS['WHOIS_TRACE'] = [];
 $GLOBALS['RDAP_LAST']   = null;
+$GLOBALS['IP_ORG_DEBUG'] = [];
 
 /////////////////////////////
 // Constants & utilities
@@ -183,34 +184,114 @@ function dig_mx(string $domain): array {
 /////////////////////////////
 
 // Return a displayable holder/organization name from an IP WHOIS text.
-// Tries common RIR fields in priority order; falls back to first "descr:".
-// Returns null if nothing found.
+// Tries common RIR fields in priority order; skips generic RIR labels.
 function ip_whois_label_from_text(string $txt): ?string {
-  $patterns = [
-    // ARIN
-    '~^\s*OrgName:\s*(.+?)\s*$~im',
-    '~^\s*Organization:\s*(.+?)\s*$~im',
-    '~^\s*CustName:\s*(.+?)\s*$~im',
-    '~^\s*NetName:\s*(.+?)\s*$~im',
-    // RIPE/APNIC/AFRINIC
-    '~^\s*org-name:\s*(.+?)\s*$~im',
-    '~^\s*netname:\s*(.+?)\s*$~im',
-    // LACNIC
-    '~^\s*owner:\s*(.+?)\s*$~im',
-    '~^\s*ownerid:\s*(.+?)\s*$~im',
-  ];
-  foreach ($patterns as $re) {
-    if (preg_match($re, $txt, $m)) {
-      $name = trim($m[1]);
-      if ($name !== '') return preg_replace('~\s+~', ' ', $name);
+    // 0) helpers
+    $isGeneric = static function(string $name): bool {
+        $name = trim($name);
+        if ($name === '') return true;
+
+        $genericPatterns = [
+            // RIR / registry names
+            '~^ripe\s+(network coordination centre|ncc)~i',
+            '~^apnic\b~i',
+            '~^afrinic\b~i',
+            '~^lacnic\b~i',
+            '~^arin\b~i',
+            '~^iana\b~i',
+            '~^internet assigned numbers authority~i',
+            '~latin american and caribbean ip address regional registry~i',
+
+            // RIPE-style netnames
+            '~^ripe-\d+$~i',
+            '~^\d+\s*-\s*ripe$~i',
+            '~-ripe$~i',
+
+            // RIPE “not our block” messages
+            '~^non-ripe.*managed-address-block$~i',
+            '~^ipv4 address block not managed by the ripe ncc$~i',
+
+            // Very generic “customer” labels
+            '~^private customer$~i',
+            '~^private person$~i',
+            '~^private user$~i',
+            '~^customer$~i',
+        ];
+
+        foreach ($genericPatterns as $re) {
+            if (preg_match($re, $name)) return true;
+        }
+        return false;
+    };
+
+    $looksCompany = static function(string $name): bool {
+        $name = strtolower($name);
+        return (bool)preg_match('~\b(inc|llc|ltd|limited|corp|corporation|gmbh|s\.r\.o|sarl|oy|ab)\b~', $name);
+    };
+
+    $candidates = [];
+
+    // 1) High-priority org/owner fields
+    $primaryPatterns = [
+        '~^\s*org-name:\s*(.+?)\s*$~im',
+        '~^\s*OrgName:\s*(.+?)\s*$~im',
+        '~^\s*Organization:\s*(.+?)\s*$~im',
+        '~^\s*CustName:\s*(.+?)\s*$~im',
+        '~^\s*owner:\s*(.+?)\s*$~im',
+        '~^\s*ownerid:\s*(.+?)\s*$~im',
+    ];
+
+    foreach ($primaryPatterns as $re) {
+        if (preg_match_all($re, $txt, $m)) {
+            foreach ($m[1] as $raw) {
+                $name = preg_replace('~\s+~', ' ', trim($raw));
+                if ($name === '' || $isGeneric($name)) continue;
+                $candidates[] = $name;
+            }
+        }
     }
-  }
-  // last-resort: first descr line (RIPE/APNIC often have good org names here)
-  if (preg_match('~^\s*descr:\s*(.+?)\s*$~im', $txt, $m)) {
-    $name = trim($m[1]);
-    if ($name !== '') return preg_replace('~\s+~', ' ', $name);
-  }
-  return null;
+
+    // 2) ARIN summary lines like:
+    // "Colocation America Corporation CAC-BLOCK7 (NET-173-211-0-0-1) 173.211.0.0 - 173.211.127.255"
+    $arinPattern = '~^\s*([A-Z0-9].*?)\s+[A-Z0-9_-]+\s+\(NET-[0-9-]+\)\s+\d{1,3}(?:\.\d{1,3}){3}\s+-\s+\d{1,3}(?:\.\d{1,3}){3}\s*$~im';
+    if (preg_match_all($arinPattern, $txt, $m)) {
+        foreach ($m[1] as $raw) {
+            $name = preg_replace('~\s+~', ' ', trim($raw));
+            if ($name === '' || $isGeneric($name)) continue;
+            $candidates[] = $name;
+        }
+    }
+
+    if (!empty($candidates)) {
+        // Prefer something that looks like a company (Inc, LLC, Ltd, Corp...)
+        foreach ($candidates as $c) {
+            if ($looksCompany($c)) {
+                return $c;
+            }
+        }
+        // Otherwise, first non-generic candidate
+        return $candidates[0];
+    }
+
+    // 3) Fallback: netname / NetName
+    if (preg_match_all('~^\s*(netname|NetName):\s*(.+?)\s*$~im', $txt, $m)) {
+        foreach ($m[2] as $raw) {
+            $name = preg_replace('~\s+~', ' ', trim($raw));
+            if ($name === '' || $isGeneric($name)) continue;
+            return $name;
+        }
+    }
+
+    // 4) Fallback: descr
+    if (preg_match_all('~^\s*descr:\s*(.+?)\s*$~im', $txt, $m)) {
+        foreach ($m[1] as $raw) {
+            $name = preg_replace('~\s+~', ' ', trim($raw));
+            if ($name === '' || $isGeneric($name)) continue;
+            return $name;
+        }
+    }
+
+    return null;
 }
 
 // Extract a displayable name from an RDAP entity (prefer vCard FN, then ORG, then handle)
@@ -264,7 +345,7 @@ function whois_is_useful(?string $txt): bool {
   if (strpos($lower, 'not supported') !== false) return false;
 
   // registry "no data" banners
-  if (strpos($lower, 'no match') !== false) return false;
+  //if (strpos($lower, 'no match') !== false) return false;
   if (strpos($lower, 'no entries found') !== false) return false;
   if (strpos($lower, 'not found') !== false) return false;
   if (strpos($lower, 'object does not exist') !== false) return false;
@@ -516,7 +597,6 @@ const WHOIS_TLD_MAP = [
 
 const WHOIS_SLD_MAP = [
   'jp.net' => 'whois.centralnic.com',
-  // (optional) other CentralNic SLDs you care about:
   'uk.com' => 'whois.centralnic.com',
   'eu.com' => 'whois.centralnic.com',
 ];
@@ -873,6 +953,7 @@ function rdap_domain(string $domain): ?array {
     'me'   => 'https://rdap.nic.me/domain/',
     'info' => 'https://rdap.afilias.net/rdap/info/domain/',
     'es'   => 'https://rdap.nic.es/domain/',
+    'it'   => 'https://rdap.nic.it/domain/',
   ][$tld] ?? null;
   if (!$rdap) return null;
   return rdap_fetch($rdap . urlencode($domain));
@@ -1180,88 +1261,177 @@ $OPTION_REGISTRY = [
 // Fetch raw WHOIS text for an IP address (port-43).
 // Uses the same socket logic as whois_port43() but targets the regional RIR WHOIS.
 function whois_port43_ip(string $ip): string {
-  $ip = trim($ip);
-  if ($ip === '') return '';
+    $ip = trim($ip);
+    if ($ip === '') return '';
 
-  // Choose a default RIR WHOIS server.
-  // whois.iana.org usually redirects us, but each RIR works too.
-  $servers = [
-    'whois.arin.net',     // North America
-    'whois.ripe.net',     // Europe/Middle East/Central Asia
-    'whois.apnic.net',    // Asia-Pacific
-    'whois.lacnic.net',   // Latin America
-    'whois.afrinic.net',  // Africa
-  ];
+    $queried = [];
+    $all = '';
 
-  // Try each server until we get a non-empty response
-  foreach ($servers as $srv) {
-    $txt = whois_port43($srv, $ip);
-    if (is_string($txt) && trim($txt) !== '') {
-      return $txt;
+    // Helper: query a server once
+    $doQuery = static function(string $server, string $ip) use (&$queried, &$all): void {
+        $server = strtolower(trim($server));
+        if ($server === '' || isset($queried[$server])) return;
+        $queried[$server] = true;
+
+        $txt = whois_port43($server, $ip);
+        if (is_string($txt) && trim($txt) !== '') {
+            if ($all !== '') {
+                $all .= "\n\n----- {$server} -----\n\n";
+            }
+            $all .= $txt;
+        }
+    };
+
+    // 1) Always start with ARIN – “root” for IPv4
+    $doQuery('whois.arin.net', $ip);
+    if ($all === '') return '';
+
+    // Look at the ARIN (or first) response only for hints
+    $first = $all;
+
+    // 2) Generic ReferralServer: whois://<server> support (ARIN, sometimes others)
+    if (preg_match_all('~^ReferralServer:\s*whois://([^\s]+)~im', $first, $m)) {
+        foreach ($m[1] as $srv) {
+            $doQuery($srv, $ip);
+        }
     }
-  }
 
-  return '';
+    // 3) Detect allocation to other RIRs in ARIN text
+    $rirHints = [
+        'lacnic' => [
+            'servers' => ['whois.lacnic.net'],
+            'patterns' => [
+                '~Allocated to LACNIC~i',
+                '~Latin American and Caribbean IP address Regional Registry~i',
+                '~\bLACNIC\b~i',
+            ],
+        ],
+        'ripe' => [
+            'servers' => ['whois.ripe.net'],
+            'patterns' => [
+                '~Allocated to RIPE~i',
+                '~R\xe9seaux IP Europ\xe9ens~i', // RIPE full name sometimes appears
+                '~\bRIPE Network Coordination Centre\b~i',
+            ],
+        ],
+        'apnic' => [
+            'servers' => ['whois.apnic.net'],
+            'patterns' => [
+                '~Allocated to APNIC~i',
+                '~Asia Pacific Network Information Centre~i',
+                '~\bAPNIC\b~i',
+            ],
+        ],
+        'afrinic' => [
+            'servers' => ['whois.afrinic.net'],
+            'patterns' => [
+                '~Allocated to AFRINIC~i',
+                '~\bAFRINIC\b~i',
+            ],
+        ],
+    ];
+
+    foreach ($rirHints as $rir => $cfg) {
+        foreach ($cfg['patterns'] as $re) {
+            if (preg_match($re, $first)) {
+                foreach ($cfg['servers'] as $srv) {
+                    $doQuery($srv, $ip);
+                }
+                break;
+            }
+        }
+    }
+
+    // 4) Optional: brute-force all RIRs as a safety net
+    // (comment out if you care a lot about latency)
+    /*
+    foreach (['whois.ripe.net','whois.apnic.net','whois.lacnic.net','whois.afrinic.net'] as $srv) {
+        $doQuery($srv, $ip);
+    }
+    */
+
+    return $all;
 }
 
 function ip_org_lookup(string $ip): string {
-  // 1) Regular WHOIS (OrgName / org-name / owner / NetName / descr)
-  $whoisTxt = whois_port43_ip($ip); // твій існуючий порт-43 фетчер
-  if (is_string($whoisTxt) && $whoisTxt !== '') {
-    $org = ip_whois_label_from_text($whoisTxt);
-    if ($org !== null && $org !== '') return $org;
-  }
+    $whoisTxt = whois_port43_ip($ip);
 
-  // 2)  RDAP entity vCard FN (із легким фільтром «рольових» назв)
-  $rd = rdap_ip($ip);
-  if (is_array($rd)) {
-    // FN з entity (врахуй, що деякі RDAP дають role-подібні FN; відсічемо найочевидніше)
-    $looksRoley = static function(string $s): bool {
-      $s = strtolower(trim($s));
-      // залишаємо NOC/Cloudflare NOC (це часто легітимна назва підрозділу),
-      // але відсікаємо чисті "Abuse Role", "Hostmaster Role" тощо
-      if (preg_match('~\bnoc\b~i', $s)) return false;
-      return (bool)preg_match('~\b(?:abuse|hostmaster)\b.*\brole\b$~i', $s);
-    };
+    // init debug record
+    if (!isset($GLOBALS['IP_ORG_DEBUG'][$ip])) {
+        $GLOBALS['IP_ORG_DEBUG'][$ip] = [
+            'source'        => null,
+            'label'         => null,
+            'whois_len'     => is_string($whoisTxt) ? strlen($whoisTxt) : null,
+            'whois_excerpt' => is_string($whoisTxt) ? substr($whoisTxt, 0, 800) : null,
+            'rdap_name'     => null,
+        ];
+    }
 
-    if (!empty($rd['entities']) && is_array($rd['entities'])) {
-      foreach ($rd['entities'] as $e) {
-        if (!empty($e['vcardArray'][1]) && is_array($e['vcardArray'][1])) {
-          foreach ($e['vcardArray'][1] as $vc) {
-            if (($vc[0] ?? '') === 'fn' && isset($vc[3]) && is_string($vc[3])) {
-              $fn = trim($vc[3]);
-              if ($fn !== '' && !$looksRoley($fn)) {
-                return $fn;
-              }
+    if (is_string($whoisTxt) && $whoisTxt !== '') {
+        $org = ip_whois_label_from_text($whoisTxt);
+        if ($org !== null && $org !== '') {
+            $GLOBALS['IP_ORG_DEBUG'][$ip]['source'] = 'whois';
+            $GLOBALS['IP_ORG_DEBUG'][$ip]['label']  = $org;
+            return $org;
+        }
+    }
+
+    // 2) RDAP
+    $rd = rdap_ip($ip);
+    if (is_array($rd)) {
+        $GLOBALS['IP_ORG_DEBUG'][$ip]['source']    = 'rdap';
+        $GLOBALS['IP_ORG_DEBUG'][$ip]['rdap_name'] = $rd['name'] ?? null;
+
+        // entities first
+        if (!empty($rd['entities']) && is_array($rd['entities'])) {
+            foreach ($rd['entities'] as $e) {
+                if (!is_array($e)) continue;
+                $name = rdap_entity_name($e);
+                if (!is_string($name)) continue;
+                $name = trim($name);
+                if ($name === '') continue;
+
+                if (preg_match('~NON-RIPE-NCC-MANAGED-ADDRESS-BLOCK~i', $name)) continue;
+                if (preg_match('~^ripe\s+(network coordination centre|ncc)~i', $name)) continue;
+                if (preg_match('~\b(abuse|hostmaster)\b.*\brole\b~i', $name)) continue;
+
+                $label = preg_replace('~\s+~', ' ', $name);
+                $GLOBALS['IP_ORG_DEBUG'][$ip]['label'] = $label;
+                return $label;
             }
-          }
         }
-      }
-    }
 
-    // RDAP top-level name
-    if (!empty($rd['name']) && is_string($rd['name'])) {
-      $name = trim($rd['name']);
-      if ($name !== '' && !preg_match('~^\d+(?:\.\d+){3}\s*-\s*\d+(?:\.\d+){3}$~', $name)) {
-        return $name;
-      }
-    }
-
-    // fallback to remarks.description
-    if (!empty($rd['remarks']) && is_array($rd['remarks'])) {
-      foreach ($rd['remarks'] as $rm) {
-        foreach ((array)($rm['description'] ?? []) as $line) {
-          $line = trim((string)$line);
-          if ($line === '') continue;
-          if (preg_match('~^(?:https?://|AS\d+|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)~i', $line)) continue;
-          return $line;
+        // top-level name (skip NON-RIPE)
+        if (!empty($rd['name']) && is_string($rd['name'])) {
+            $name = trim($rd['name']);
+            if (
+                $name !== '' &&
+                !preg_match('~NON-RIPE-NCC-MANAGED-ADDRESS-BLOCK~i', $name) &&
+                !preg_match('~^ripe\s+(network coordination centre|ncc)~i', $name)
+            ) {
+                $label = preg_replace('~\s+~', ' ', $name);
+                $GLOBALS['IP_ORG_DEBUG'][$ip]['label'] = $label;
+                return $label;
+            }
         }
-      }
-    }
-  }
 
-  // 3) nothing found
-  return '';
+        // remarks fallback
+        if (!empty($rd['remarks']) && is_array($rd['remarks'])) {
+            foreach ($rd['remarks'] as $rm) {
+                foreach ((array)($rm['description'] ?? []) as $line) {
+                    $line = trim((string)$line);
+                    if ($line === '') continue;
+                    if (preg_match('~NON-RIPE-NCC-MANAGED-ADDRESS-BLOCK~i', $line)) continue;
+
+                    $label = preg_replace('~\s+~', ' ', $line);
+                    $GLOBALS['IP_ORG_DEBUG'][$ip]['label'] = $label;
+                    return $label;
+                }
+            }
+        }
+    }
+
+    return '';
 }
 
 /////////////////////////////
@@ -1277,6 +1447,11 @@ $debugFlag = false;
 
 if (isset($_GET['domain']) && is_string($_GET['domain'])) $inDomains[] = $_GET['domain'];
 if (isset($_GET['__debug'])) $debugFlag = true;
+if (isset($_GET['options']) && is_string($_GET['options'])) {
+  foreach (explode(',', $_GET['options']) as $opt) {
+    $inOptions[] = $opt;
+  }
+}
 
 if ($body) {
   $j = json_decode($body, true);
@@ -1353,12 +1528,24 @@ foreach ($inDomains as $rawDomain) {
             $parsed['registrar'] = trim($m[1]);
           }
 
+          if ($parsed['registrar'] === '') {
+              if (preg_match('~Registrar\s*\R\s*Organization:\s*(.+)~i', $wtxt, $m)) {
+                  $parsed['registrar'] = trim($m[1]);
+              } elseif (preg_match('~Registrar\s*\R\s*Name:\s*(.+)~i', $wtxt, $m)) {
+                  $parsed['registrar'] = trim($m[1]);
+              }
+          }
+
           $cdCandidates = [];
-          if (preg_match('~^\s*(?:Creation Date|Created On|Registered On|Registration Time)\s*:\s*(.+?)\s*$~im', $wtxt, $m)) {
-            $cdCandidates[] = trim($m[1]);
+          if (preg_match(
+                  '~^\s*(?:Creation Date|Created On|Created|Registered On|Registration Time)\s*:\s*(.+?)\s*$~im',
+                  $wtxt,
+                  $m
+          )) {
+              $cdCandidates[] = trim($m[1]);
           }
           if (preg_match('~^\s*Domain\s+Registration\s+Date\s*:\s*(.+?)\s*$~im', $wtxt, $m)) {
-            $cdCandidates[] = trim($m[1]);
+              $cdCandidates[] = trim($m[1]);
           }
           $parsed['creation_date'] = normalize_date($cdCandidates) ?? '';
 
@@ -1453,18 +1640,19 @@ foreach ($inDomains as $rawDomain) {
 
   // Build debug payload
   $dbg = null;
-  if ($debugFlag) {
-    $dbg = [
-      'whois_raw_excerpt' => substr((string)($ctx['whois_raw'] ?? ''), 0, 800),
-      'whois_parsed'      => $ctx['whois'] ?? [],
-      'whois_trace'       => $GLOBALS['WHOIS_TRACE'] ?? [],
-      'rdap_used'         => !empty($GLOBALS['RDAP_LAST']['used']),
-      'rdap_excerpt'      => isset($GLOBALS['RDAP_LAST']['excerpt']) ? substr($GLOBALS['RDAP_LAST']['excerpt'], 0, 800) : null,
-      'http_status'       => $ctx['http_status'] ?? null,
-      'http_final'        => $ctx['http_final'] ?? null,
-      'http_ctype'        => $ctx['http_ctype'] ?? null,
-    ];
-  }
+    if ($debugFlag) {
+        $dbg = [
+          'whois_raw_excerpt' => substr((string)($ctx['whois_raw'] ?? ''), 0, 800),
+          'whois_parsed'      => $ctx['whois'] ?? [],
+          'whois_trace'       => $GLOBALS['WHOIS_TRACE'] ?? [],
+          'rdap_used'         => !empty($GLOBALS['RDAP_LAST']['used']),
+          'rdap_excerpt'      => isset($GLOBALS['RDAP_LAST']['excerpt']) ? substr($GLOBALS['RDAP_LAST']['excerpt'], 0, 800) : null,
+          'http_status'       => $ctx['http_status'] ?? null,
+          'http_final'        => $ctx['http_final'] ?? null,
+          'http_ctype'        => $ctx['http_ctype'] ?? null,
+          'ip_org_debug'      => $GLOBALS['IP_ORG_DEBUG'] ?? [],
+        ];
+    }
 
   $items[] = [
     'domain' => $norm,
