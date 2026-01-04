@@ -1234,15 +1234,36 @@ $OPTION_REGISTRY = [
     }
   ],
   'MX_org' => [
-    'deps' => ['MX','IP_ORG'],
+    'deps' => ['MX','MX_IP_ORG'],
     'present' => function(array $ctx): array {
       $out = [];
-      $orgs = $ctx['a_org'] ?? [];
+      $orgs = $ctx['mx_ip_org'] ?? [];
       foreach (($ctx['mx'] ?? []) as $m) {
         $ips = dig_a($m['host']);
         foreach ($ips as $ip) if (!empty($orgs[$ip])) $out[] = $orgs[$ip];
       }
       return array_values(array_unique($out));
+    }
+  ],
+
+  // Full MX info (prio + resolved IPs + org per IP)
+  'MX_full' => [
+    'deps' => ['MX','MX_IP_ORG'],
+    'present' => function(array $ctx): array {
+      $out = [];
+      $orgs = $ctx['mx_ip_org'] ?? [];
+      foreach (($ctx['mx'] ?? []) as $m) {
+        $ips = [];
+        foreach (dig_a($m['host']) as $ip) {
+          $ips[] = ['ip' => $ip, 'org' => ($orgs[$ip] ?? null) ?: null];
+        }
+        $out[] = [
+          'host' => $m['host'],
+          'prio' => (int)($m['prio'] ?? 0),
+          'ips'  => $ips,
+        ];
+      }
+      return $out;
     }
   ],
 
@@ -1354,6 +1375,10 @@ function whois_port43_ip(string $ip): string {
 }
 
 function ip_org_lookup(string $ip): string {
+    // per-request memoization to avoid repeated WHOIS/RDAP calls
+    static $cache = [];
+    if (array_key_exists($ip, $cache)) return $cache[$ip];
+
     $whoisTxt = whois_port43_ip($ip);
 
     // init debug record
@@ -1372,7 +1397,7 @@ function ip_org_lookup(string $ip): string {
         if ($org !== null && $org !== '') {
             $GLOBALS['IP_ORG_DEBUG'][$ip]['source'] = 'whois';
             $GLOBALS['IP_ORG_DEBUG'][$ip]['label']  = $org;
-            return $org;
+            return $cache[$ip] = $org;
         }
     }
 
@@ -1397,7 +1422,7 @@ function ip_org_lookup(string $ip): string {
 
                 $label = preg_replace('~\s+~', ' ', $name);
                 $GLOBALS['IP_ORG_DEBUG'][$ip]['label'] = $label;
-                return $label;
+                return $cache[$ip] = $label;
             }
         }
 
@@ -1411,7 +1436,7 @@ function ip_org_lookup(string $ip): string {
             ) {
                 $label = preg_replace('~\s+~', ' ', $name);
                 $GLOBALS['IP_ORG_DEBUG'][$ip]['label'] = $label;
-                return $label;
+                return $cache[$ip] = $label;
             }
         }
 
@@ -1425,13 +1450,13 @@ function ip_org_lookup(string $ip): string {
 
                     $label = preg_replace('~\s+~', ' ', $line);
                     $GLOBALS['IP_ORG_DEBUG'][$ip]['label'] = $label;
-                    return $label;
+                    return $cache[$ip] = $label;
                 }
             }
         }
     }
 
-    return '';
+    return $cache[$ip] = '';
 }
 
 /////////////////////////////
@@ -1608,6 +1633,20 @@ foreach ($inDomains as $rawDomain) {
       }
       case 'MX': {
         $ctx['mx'] = dig_mx($norm);
+        break;
+      }
+      case 'MX_IP_ORG': {
+        // Resolve orgs for IPs behind MX hosts (independent from domain A-record orgs)
+        $mx = $ctx['mx'] ?? dig_mx($norm);
+        $ipSet = [];
+        foreach ($mx as $m) {
+          foreach (dig_a($m['host']) as $ip) $ipSet[$ip] = true;
+        }
+        $orgs = [];
+        foreach (array_keys($ipSet) as $ip) {
+          $orgs[$ip] = ip_org_lookup($ip);
+        }
+        $ctx['mx_ip_org'] = $orgs;
         break;
       }
       case 'IP_ORG': {

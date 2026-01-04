@@ -198,7 +198,7 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
     const f = it.fields || {};
     const block = [];
 
-    // Sanitise the suspension list in case it is broken
+    // Sanitize the suspension list in case it is broken
     let tempSuspArray = []
     if (f.IsSusp){
       f.IsSusp.forEach((element) => {
@@ -206,7 +206,7 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
       })
       f.IsSusp = tempSuspArray;
     }
-    console.log(f)
+    //console.log(f)
 
     // Domain line (append Reg_date if selected and present)
     if (want.has('Reg_date') && f.Reg_date) {
@@ -263,7 +263,7 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
         block.push(`${f.HasContent ? 'Content present' : '- No content'}`);
       }
 
-    // MX (combine host with matching MX_org by index when possible)
+    /*// MX (combine host with matching MX_org by index when possible)
     if (want.has('MX') || want.has('MX_org')) {
       const mxHosts = Array.isArray(f.MX) ? f.MX : [];
       const mxOrgs = Array.isArray(f.MX_org) ? f.MX_org : [];
@@ -291,6 +291,15 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
       } else {
         //block.push('- No MX');
       }
+    }*/
+
+    if (f.MX_full){
+      block.push(`${f.MX_full[0] ? '-- MX nameserver / IP / IP owner --' : '-No MX-'}`);
+      //console.log(f.MX_full, "mxdata")
+      f.MX_full.forEach((element) => {
+        let output = `${element.host} - ${element.ips[0].ip} - ${element.ips[0].org}`;
+        block.push(output);
+      })
     }
 
     if (f.NoMatch) block.push(`Possibly not reg: ${f.NoMatch}`);
@@ -346,7 +355,11 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
 
       // Using either PE or JF
       if (activeFilters.UseOurMail) {
-        fres.PE = !!(f.MX[0] ? f.MX[0].match(/(private ?email)|(jellyfish)/gmi) : false);
+        //fres.PE = !!(f.MX_full[0] ? f.MX_full[0].ips[0].org.match(/(private ?email)|(jellyfish)/gmi) : false);
+        if (f.MX_full[0]){
+          if (f.MX_full[0].ips[0].org.match(/(namecheap)/gmi)) fres.PE = true;
+          if (f.MX_full[0].host.match(/(private ?email)|(jellyfish)/gmi)) fres.PE = true;
+        } else fres.PE = false;
       }
 
       // Hosted pointed to our IPs

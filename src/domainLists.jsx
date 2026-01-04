@@ -8332,4 +8332,12 @@ export const skipDomains = [
   "ultahost.com",
   "ovh.ca",
   "dnschecker.org",
+  "virustotal.com",
+  "filescan.io",
+  "abuse.ch",
+  "snarasm.org",
+  "ietf.org",
+  "indra.com",
+  "gtld-servers.net",
+  "dazn.com",
 ]
