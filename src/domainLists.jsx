@@ -8340,4 +8340,6 @@ export const skipDomains = [
   "indra.com",
   "gtld-servers.net",
   "dazn.com",
+  "mailgun.org",
+  "iterable.com",
 ]

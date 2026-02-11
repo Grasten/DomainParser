@@ -94,8 +94,18 @@ function App() {
           <div className="parser__topbar__inputs">
             <label htmlFor="parserInput" className="parser__topbar__inputs__label"></label>
             <div className="parser__topbar__inputs__box">
-              <button className="parser__topbar__inputs__box__clear"
-                      onClick={() => document.getElementById("parserInput").value = ""}>Clear</button>
+              <div className="parser__topbar__inputs__box__buttons">
+                <button className="parser__topbar__inputs__box__buttons__clear"
+                        onClick={() => document.getElementById("parserInput").value = ""}>Clear</button>
+                <button className="parser__topbar__inputs__box__buttons__insert"
+                        onClick={() => navigator.clipboard.readText()
+                          .then(text => {
+                            document.getElementById("parserInput").value = text;
+                          })
+                          .catch(err => {
+                            console.error('Failed to read clipboard contents: ', err);
+                          })}>Insert</button>
+              </div>
               <textarea spellCheck="false" className="parser__topbar__inputs__box__input parser-fields" id="parserInput"
                         defaultValue=""></textarea>
             </div>

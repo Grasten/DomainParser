@@ -297,7 +297,9 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
       block.push(`${f.MX_full[0] ? '-- MX nameserver / IP / IP owner --' : '-No MX-'}`);
       //console.log(f.MX_full, "mxdata")
       f.MX_full.forEach((element) => {
-        let output = `${element.host} - ${element.ips[0].ip} - ${element.ips[0].org}`;
+        let output = `${element.host} - ${
+          element.ips[0] ? `${element.ips[0].ip} - ${element.ips[0].org}` : ''
+        }`;
         block.push(output);
       })
     }
@@ -357,7 +359,9 @@ function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
       if (activeFilters.UseOurMail) {
         //fres.PE = !!(f.MX_full[0] ? f.MX_full[0].ips[0].org.match(/(private ?email)|(jellyfish)/gmi) : false);
         if (f.MX_full[0]){
-          if (f.MX_full[0].ips[0].org.match(/(namecheap)/gmi)) fres.PE = true;
+          if (f.MX_full[0].ips[0] && f.MX_full[0].ips[0].org){
+            if (f.MX_full[0].ips[0].org.match(/(namecheap)/gmi)) fres.PE = true;
+          }
           if (f.MX_full[0].host.match(/(private ?email)|(jellyfish)/gmi)) fres.PE = true;
         } else fres.PE = false;
       }
