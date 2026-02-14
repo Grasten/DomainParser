@@ -139,7 +139,6 @@ button {
                     right: 1px;
                     display: flex;
                     flex-direction: column;
-                    background-color: $c-light-gray;
                     gap: 1px;
                     & > button{
                         height: 3rem;
@@ -153,9 +152,9 @@ button {
                             text-shadow: 0 0 3px black;
                             border: none;
                         }
-                    }
-                    &__insert{
-                        border-radius: 0 0 0 1rem;
+                        &:last-child{
+                            border-radius: 0 0 0 1rem;
+                        }
                     }
                 }
             }

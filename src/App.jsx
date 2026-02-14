@@ -59,6 +59,25 @@ function App() {
     return tempArray;
   }
 
+  function handleInsert(){
+    navigator.clipboard.readText()
+      .then(text => {
+        document.getElementById("parserInput").value = text;
+      })
+      .catch(err => {
+        console.error('Failed to read clipboard contents: ', err);
+      })
+  }
+
+  async function setClipboard(text) {
+    const type = "text/plain";
+    const clipboardItemData = {
+      [type]: text,
+    };
+    const clipboardItem = new ClipboardItem(clipboardItemData);
+    await navigator.clipboard.write([clipboardItem]);
+  }
+
   return (
     <>
       <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -95,16 +114,31 @@ function App() {
             <label htmlFor="parserInput" className="parser__topbar__inputs__label"></label>
             <div className="parser__topbar__inputs__box">
               <div className="parser__topbar__inputs__box__buttons">
+
                 <button className="parser__topbar__inputs__box__buttons__clear"
-                        onClick={() => document.getElementById("parserInput").value = ""}>Clear</button>
+                        onClick={() => document.getElementById("parserInput").value = ""}>Clear
+                </button>
+
                 <button className="parser__topbar__inputs__box__buttons__insert"
-                        onClick={() => navigator.clipboard.readText()
-                          .then(text => {
-                            document.getElementById("parserInput").value = text;
-                          })
-                          .catch(err => {
-                            console.error('Failed to read clipboard contents: ', err);
-                          })}>Insert</button>
+                        onClick={() => {
+                          handleInsert();
+                          setTimeout(function() {
+                            parseDomains("hostname");
+                          }, 1);
+                        }}>Insert
+                </button>
+
+                <button className="parser__topbar__inputs__box__buttons__insert"
+                        onClick={() => {
+                          handleInsert();
+                          setTimeout(function() {
+                            parseDomains("hostname");
+                            setClipboard(document.getElementById("parserOutput").value)
+                            handleFetch();
+                          }, 10);
+                        }}>DoAll
+                </button>
+
               </div>
               <textarea spellCheck="false" className="parser__topbar__inputs__box__input parser-fields" id="parserInput"
                         defaultValue=""></textarea>
