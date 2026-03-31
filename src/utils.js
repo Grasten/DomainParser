@@ -1,214 +1,580 @@
-import { parse } from 'tldts';
+import {parse} from 'tldts';
 import linkifyit from 'linkify-it';
-const linkify = linkifyit();
 import tlds from 'tlds';
-linkify.tlds(tlds)
+import { SLTLDs, skipDomains } from "./domainLists.jsx";
+
+const linkify = linkifyit();
+linkify.tlds(tlds);
+linkify.tlds(SLTLDs);
 
 let filteredLinksArray = [];
-const regBracketDotText = /(\s?\W\s?)dot(\s?\W\s?)/ig;
-const regBracketDot = /(\s?\W\s?)\.(\s?\W\s?)/ig;
+//const regBracketDotText = /(\s?\W\s?)dot(\s?\W\s?)/ig;
+const regBracketDotText = /([ \t]?[^\w\s][ \t]?)dot([ \t]?[^\w\s][ \t]?)/ig;
+//const regBracketDot = /(\s?\W\s?)\.(\s?\W\s?)/ig;
+const regBracketDot = /([ \t]?[^\w\s][ \t]?)\.([ \t]?[^\w\s][ \t]?)/ig;
 const regDomains = /(?<=^|[^a-z0-9])((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[^a-z0-9]|$)/gi;
-const regHttps = /hxxps\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
-const regHttp = /hxxp\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
-const mailerDomains = [
-  "gmail.com",
-  "yahoo.com",
-  "hotmail.com",
-  "outlook.com",
-  "icloud.com",
-  "mail.com",
-  "aol.com",
-  "protonmail.com",
-  "zoho.com",
-  "yandex.com",
-  "gmx.com",
-  "me.com",
-  "tutanota.com",
-  "live.com",
-  "fastmail.com",
-  "hushmail.com",
-  "qq.com",
-  "naver.com",
-  "163.com",
-  "rediffmail.com",
-]
+const regDomainsExtended = /(https?:\/\/)?(?<=^|[^a-z0-9])((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[^a-z0-9]|$)(\S+)?/gi;
+const regHxxps = /hxxps\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
+const regHxxp = /hxxp\s*\[?\s*?:\s*?]?\s*\/{1,2}\s*/gi;
+const regSemicolon = / ?\[:] ?/gi;
+const regSuspended = /serverHold|clientHold|Inactive|notFound/i;
+const regMailNewlines = /(=\s?\n)(?!google\.com)/i;
 
-// --- BASE FUNCTIONS ---
+/* =========================
+   UI helpers
+   ========================= */
 
-// Returns input text with basic parsing (brackets, protocols)
+// Read checked boxes as UI labels (Reg_date, IP, IP_org, NS, MX, MX_org, IsSusp, Regist)
+function getSelectedUiOptions() {
+  const fs = document.getElementById('infoTypeSelector');
+  if (!fs) return [];
+  return Array.from(fs.querySelectorAll('input[type="checkbox"]'))
+    .filter(el => el.checked && !el.disabled)
+    .map(el => el.value || el.id.replace(/^checkbox/, ''));
+}
+
+// Visual checkbox toggle
+function toggleCheckbox(id, checked){
+  const el = document.getElementById(id);
+  if (!el) return;
+  const cls = "parser__options__checkModule__vis-checkbox--checked";
+  if (typeof checked === 'boolean') {
+    el.classList.toggle(cls, checked);
+  } else {
+    el.classList.toggle(cls);
+  }
+}
+
+/* =========================
+   Input parsing
+   ========================= */
+
 function getInputText(){
-  // Get domains from input
   let worklist = document.getElementById("parserInput").value;
-
-  // Remove brackets, fix protocols
   worklist = worklist.replace(regBracketDot, ".");
   worklist = worklist.replace(regBracketDotText, ".");
-  worklist = worklist.replace(regHttps, "https://");
-  worklist = worklist.replace(regHttp, "http://");
+  worklist = worklist.replace(regHxxps, "https://");
+  worklist = worklist.replace(regHxxp, "http://");
+  worklist = worklist.replace(regSemicolon, ":");
+  worklist = worklist.replace(regMailNewlines, "");
   return worklist;
 }
 
-// Returns an array of verified domains from input
+// Find valid domains/hostnames in text and set filteredLinksArray
 function getDomains(type) {
-  // Get text from input
   let worklist = getInputText();
-
-  // Search for links in text
   worklist = worklist.match(regDomains) || [];
-
-  // Set them in array with unique values
   worklist = [...new Set(worklist)];
+  //console.clear()
+  //console.log(worklist, "worklist received");
 
-  // Validate domains and remove invalid
-  let tempArray = [];
-
+  const tempArray = [];
   worklist.forEach((domain) => {
-    let el = parse(domain)
-    if (el.isIcann){
+    //console.log(domain, "123");
+    const el = parse(domain);
+    if (el.isIcann && el.domain && !SLTLDs.includes(el.hostname)) {
+      if (SLTLDs.includes(el.domain)){
+        const tempRegExp = new RegExp(`(?:\\.)?([^.]+\\.${el.domain})`, "gm");
+        //console.log(el)
+        //console.log(tempRegExp.exec(el.hostname))
+        el.domain = tempRegExp.exec(el.hostname)[1];
+      }
       tempArray.push(el);
     }
   });
-  worklist = [...new Set(tempArray)];
 
-  // Reset filtered array/output
-  filteredLinksArray = [];
-
-  // Set domains into filtered array
-  tempArray = [];
-  worklist.forEach((domain) => {
-    tempArray.push(domain[type]);
-  });
-  filteredLinksArray= [...new Set(tempArray)];
-
-  // Get a text list from filtered array
-  worklist = createListFromArray(filteredLinksArray);
-
-  return({worklist, filteredLinksArray});
+  filteredLinksArray = [...new Set(tempArray.map(d => d[type]))];
+  const listText = createListFromArray(filteredLinksArray);
+  return ({ worklist: listText, filteredLinksArray });
 }
 
-// Returns an array of verified links from input
+// Extract full URLs (used if user clicks “Parse URLs”)
 function getLinks() {
-  // Get text from input
   let worklist = getInputText();
+  const urls = [];
+  //console.clear();
+  //console.log(worklist, 'worklist');
 
-  // Search for links in text
-  worklist = linkify.match(worklist) || [];
+  // optionally include hostnames if parse URLS with hostnames checkbox selected
+  if (document.getElementById("checkboxParseURLsHostnames").checked){
+    worklist = worklist.match(regDomainsExtended) || [];
+    //console.log(worklist, 'worklist after exteneded');
+    worklist = [...new Set(worklist)];
 
-  // Set them in array with unique values
-  worklist = [...new Set(worklist)];
+    const tempArray = [];
+    worklist.forEach((domain) => {
 
-  // Validate domains and remove duplicates
-  let tempArray = [];
-  worklist.forEach((domain) => {
-    let el = parse(domain.text)
-    if (el.isIcann){
-      tempArray.push(domain.text);
-    }
-  });
-  worklist = [...new Set(tempArray)];
+      //console.log(domain);
+      // parse as link if http or https present
+      if (domain.match(/https?:\/\//gi)) {
+        tempArray.push(linkify.match(domain)[0]);
+        //console.log(linkify.match(domain), 'linkifyMatchHttps');
+        return;
+      }
 
-  // Reset filtered array/output and set domains
-  /*filteredLinksArray = [];
-  tempArray = [];
-  worklist.forEach((domain) => {
-    tempArray.push(domain);
-  });*/
-  filteredLinksArray= [...new Set(worklist)];
+      //parse as hostname
+      const el = parse(domain);
+      if (el.isIcann && el.domain && !SLTLDs.includes(el.hostname)) {
+        if (SLTLDs.includes(el.domain)){
+          const tempRegExp = new RegExp(`(?:\\.)?([^.]+\\.${el.domain})`, "gm");
+          el.domain = tempRegExp.exec(el.hostname)[1];
+        }
 
-  // Get a text list from filtered array
-  worklist = createListFromArray(filteredLinksArray);
+        // check for subfolder and add it if it is present
+        let subfolder = (/(\w\/)([-a-zA-Z0-9@:%_+.~#?&/=]+)/).exec(domain)
+        if (subfolder){
+          el.text = el.hostname + '/' + subfolder[2];
+        } else el.text = el.hostname;
 
-  return({worklist, filteredLinksArray});
-}
+        tempArray.push(el);
+      }
+    });
+    worklist = tempArray;
 
-// Converts an array of domains to a text list
-function createListFromArray(domainArray){
-  let i = domainArray.length -1;
-  let domainList = "";
-  domainArray.forEach((domain) => {
-    domainList+= `${domain}${i!==0?"\n":""}`;
-    i--;
-  })
-  return domainList;
-}
-
-
-
-// --- EXPORT FUNCTIONS ---
-
-// Accepts either "domain" or "hostname" as a param, sets filtered array and values to frontend
-export function parseDomains(type){
-  let links = {};
-  let filter = document.getElementById("filterInput").value;
-
-  switch(type){
-    case "hostname": links = getDomains(type);
-    break;
-    case "domain": links = getDomains(type);
-    break;
-    case "url": links = getLinks();
-    break;
+  } else {
+    worklist = linkify.match(worklist) || [];
   }
 
-  // If filter option is present, filter the array for it and update worklist
+  worklist = [...new Set(worklist)];
+
+  worklist.forEach((m) => {
+    //if (!m.text.includes("@")) {
+      const el = parse(m.text);
+      if (el.isIcann) urls.push(m.text);
+    //}
+  });
+
+  filteredLinksArray = [...new Set(urls)];
+  const listText = createListFromArray(filteredLinksArray);
+  return ({ worklist: listText, filteredLinksArray });
+}
+
+function createListFromArray(arr){
+  let i = arr.length - 1;
+  let out = "";
+  arr.forEach((v) => { out += `${v}${i!==0 ? "\n" : ""}`; i--; });
+  return out;
+}
+
+/* =========================
+   API v2
+   ========================= */
+
+// POST to v2 API with domains/urls + selected options
+async function fetchDomainInfo({ endpoint = 'https://test.grasten.org/api/domains.php', options = [], debug = false } = {}) {
+  const src =
+    (typeof filteredLinksArray !== 'undefined' && Array.isArray(filteredLinksArray)) ? filteredLinksArray :
+      (typeof window !== 'undefined' && Array.isArray(window.filteredLinksArray)) ? window.filteredLinksArray :
+        [];
+
+  const domains = [...new Set(src.map(s => String(s).trim()).filter(Boolean))];
+  if (domains.length === 0) return { ok: true, items: [] };
+
+  const body = { domains, options, ...(debug ? { debug: true } : {}) };
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+  return res.json();
+}
+
+/* =========================
+   Formatting (v2 items[])
+   ========================= */
+
+function formatDomainInfoPretty(api, uiSelected = [], overwrite = false) {
+  const items = Array.isArray(api?.items) ? api.items : [];
+  const want = new Set(uiSelected || []);
+  const out = [];
+  let rtCount = 0, rmCount = 0;
+
+  for (const it of items) {
+    const d = it.domain || '';
+    const f = it.fields || {};
+    const block = [];
+
+    // Sanitize the suspension list in case it is broken
+    let tempSuspArray = []
+    if (f.IsSusp){
+      f.IsSusp.forEach((element) => {
+        if (element.match(regSuspended)) tempSuspArray.push(element.match(regSuspended));
+      })
+      f.IsSusp = tempSuspArray;
+    }
+    //console.log(f)
+
+    // Domain line (append Reg_date if selected and present)
+    if (want.has('Reg_date') && f.Reg_date) {
+      block.push(`${d} - ${f.Reg_date}`);
+    } else {
+      block.push(d);
+    }
+
+    // Result build cycle, stop if no match
+    //if (f.NoMatch && false) {
+    //  block.push(`${f.NoMatch}`);
+    //} else {
+      // IP / IP_org (single combined line)
+
+      if (want.has('IP') || want.has('IP_org')) {
+        const ips = Array.isArray(f.IP) ? f.IP : [];
+        const orgs = Array.isArray(f.IP_org) ? f.IP_org : [];
+        if (ips.length) {
+          const orgStr = orgs.length ? ` - ${orgs.join(', ')}` : '';
+          block.push("Hosted on: " + ips.map(ip => `${ip}${orgStr}`).join('; '));
+        } else if (want.has('IP_org') && orgs.length) {
+          block.push("Hosted on: " + orgs.join(', '));
+        } else {
+          block.push('- Not pointed');
+        }
+      }
+
+      // NS (comma-separated)
+      if (want.has('NS')) {
+        const ns = Array.isArray(f.NS) ? f.NS : [];
+        block.push(ns.length ? "NS: " + ns.join(', ') : '- No NS');
+      }
+
+      // IsSusp (exact phrasing)
+      if (want.has('IsSusp')) {
+        let holds = [];
+        if (Array.isArray(f.IsSusp) && f.IsSusp[0] === "notFound") {
+          block.push('Status search failed');
+        } else {
+          //double-check the suspension statuses to make sure
+          /*f.IsSusp.forEach(h => {
+            if (h.match(regSuspended)) holds.push(h)
+          });*/
+          holds = f.IsSusp;
+          block.push(holds.length ? `Suspended: ${holds.join(', ')}` : 'Not suspended');
+        }
+      }
+      // Regist
+      if (want.has('Regist')) {
+        block.push(f.Regist ? `Reg with: ${f.Regist}` : 'Registry search failed');
+      }
+      // HasContent
+      if (want.has('HasContent')) {
+        block.push(`${f.HasContent ? 'Content present' : '- No content'}`);
+      }
+
+    /*// MX (combine host with matching MX_org by index when possible)
+    if (want.has('MX') || want.has('MX_org')) {
+      const mxHosts = Array.isArray(f.MX) ? f.MX : [];
+      const mxOrgs = Array.isArray(f.MX_org) ? f.MX_org : [];
+
+      // Always show the MX header if either option is selected
+      block.push(`${mxHosts.length ? '-- MX nameserver / service owner --' : '-No MX-'}`);
+      //console.log(f.MX, f.MX_org, "mxdata")
+
+      if (mxHosts.length && mxOrgs.length) {
+        // Pair by index; if lengths differ, fall back gracefully
+        const n = Math.max(mxHosts.length, mxOrgs.length);
+        for (let i = 0; i < n; i++) {
+          const host = mxHosts[i] ?? mxHosts[mxHosts.length - 1] ?? '';
+          const org = mxOrgs[i] ?? '';
+          if (host && org) block.push(`${host} - ${org}`);
+          else if (host) block.push(host);
+          else if (org) block.push(org);
+        }
+      } else if (mxHosts.length) {
+        // Only hosts available
+        mxHosts.forEach(h => block.push(h));
+      } else if (mxOrgs.length) {
+        // Only IP-org entries available
+        mxOrgs.forEach(s => block.push(s));
+      } else {
+        //block.push('- No MX');
+      }
+    }*/
+
+    if (f.MX_full){
+      block.push(`${f.MX_full[0] ? '-- MX nameserver / IP / IP owner --' : '-No MX-'}`);
+      //console.log(f.MX_full, "mxdata")
+      f.MX_full.forEach((element) => {
+        let output = `${element.host} - ${
+          element.ips[0] ? `${element.ips[0].ip} - ${element.ips[0].org}` : ''
+        }`;
+        block.push(output);
+      })
+    }
+
+    if (f.NoMatch) block.push(`Possibly not reg: ${f.NoMatch}`);
+
+    //}
+
+    let bjoin = block.join('\n') // joing all the built result blocks together
+
+    // ------- FILTERS -------
+    let fres = {}; ///filter results
+    let activeFilters = {}, ActiveAND = false;
+
+    //Output filter separate
+    if (!(bjoin.match(document.getElementById("filterOutput").value))) {
+      rmCount++
+      continue
+    }
+
+    //get selected filters
+    const fs = document.getElementById('secondarySelector');
+    let secondarySelected = Array.from(fs.querySelectorAll('input[type="checkbox"]'))
+      .filter(el => el.checked && !el.disabled)
+      .map(el => el.value || el.id.replace(/^checkbox/, ''));
+
+    if (typeof overwrite === "string") secondarySelected = [overwrite];
+
+    secondarySelected.forEach(el => {
+      if(el === "SecondaryAND") ActiveAND = true;
+      else {
+        activeFilters[el] = true;
+      }
+    })
+
+    //console.log(activeFilters, 'activeFilters');
+
+    // run only if any filters are selected, true means meets requirements to pass the filter
+    if (Object.keys(activeFilters).length) {
+
+      // NC or SH registrars
+      if (activeFilters.RegWithUs){
+        fres.reg = !!(f.Regist ? f.Regist.match(/(namecheap)|(spaceship)/gmi) : false);
+      }
+
+      // Could not detect registry
+      if (activeFilters.RegUnclear){
+        fres.regUnclear = Object.hasOwn(f, "Regist") ? (f.Regist === "" && !f.NoMatch) : false;
+      }
+
+      // Display not registered domains
+      if (activeFilters.NotReg){
+        fres.notReg = !!f.NoMatch;
+      }
+
+      // Using either PE or JF
+      if (activeFilters.UseOurMail) {
+        //fres.PE = !!(f.MX_full[0] ? f.MX_full[0].ips[0].org.match(/(private ?email)|(jellyfish)/gmi) : false);
+        if (f.MX_full[0]){
+          if (f.MX_full[0].ips[0] && f.MX_full[0].ips[0].org){
+            if (f.MX_full[0].ips[0].org.match(/(namecheap)/gmi)) fres.PE = true;
+          }
+          if (f.MX_full[0].host.match(/(private ?email)|(jellyfish)/gmi)) fres.PE = true;
+        } else fres.PE = false;
+      }
+
+      // Hosted pointed to our IPs
+      if (activeFilters.HostedWithUs) {
+        fres.hosted = !!(f.IP_org[0] ? f.IP_org[0].match(/(namecheap)|(spaceship)/gmi) : false);
+      }
+
+      // Not suspended
+      if (activeFilters.NotSuspended) {
+        if (Object.hasOwn(f, "IsSusp") && f.IsSusp[0] !== "notFound") {
+          fres.notsusp = !f.IsSusp.length
+        }
+        //fres.notsusp = Object.hasOwn(f, "IsSusp") ? !f.IsSusp.length : false;
+      }
+
+
+      // debugg
+      //if (activeFilters.debugg){
+      //  console.log(f)
+      //}
+
+      // use either OR AND when checking conditions
+      //console.log(fres, 'fres')
+      let fresArray = Object.values(fres);
+      //console.log(fresArray, "fresarray");
+
+      if (ActiveAND) {
+        if (!fresArray.every(value => value === true)) {
+          rmCount++
+          continue;
+        }
+      } else {
+        if (!fresArray.some(value => value === true)) {
+          rmCount++
+          continue;
+        }
+      }
+
+      /*if (ActiveAND){
+        if ((doesntUsePE !==) || notRegistered) {
+          rmCount++;
+          continue;
+        }
+      } else {
+        if (doesntUsePE && notRegistered) {
+          rmCount++;
+          continue;
+        }
+      }*/
+    }
+
+    //console.log(f, "F")
+    out.push(bjoin);
+    rtCount++;
+  }
+
+  return {text: out.join('\n\n'), rtCount, rmCount};
+}
+
+/* =========================
+   Main button handler
+   ========================= */
+
+async function handleFetch(overwriteFetchParams, overwriteFilters){
+  const btn = document.getElementById("fetchInfo");
+  btn.innerText = "Running...";
+
+  if (filteredLinksArray.length === 0){
+    btn.innerText = "No links found";
+    setTimeout(() => { btn.innerText = "Fetch domains info"; }, 1000);
+    return;
+  }
+
+  try {
+    let ui = getSelectedUiOptions();
+    // to receive info if the domain was not found
+    ui.push('NoMatch')
+    // v2: send UI options directly
+
+    // rewrite params for reparse
+    if (typeof overwriteFetchParams === "string") {
+      ui = [overwriteFetchParams]
+     }
+
+    const data = await fetchDomainInfo({ options: ui });
+
+    const formattedData = formatDomainInfoPretty(data, ui, overwriteFilters);
+    document.getElementById('parserOutput').value = formattedData.text;
+    document.getElementById('parserOutputCounter').innerText = `Domains returned: ${formattedData.rtCount}${
+      formattedData.rmCount > 0 ? ` | Removed due to selected options: ${formattedData.rmCount}` : ''}`;
+    return formattedData.text;
+  } catch (e) {
+    console.error(e);
+  } finally {
+    btn.innerText = "Fetch domains info";
+  }
+}
+
+/* =========================
+   Toolkit actions
+   ========================= */
+
+async function copyCommand(type){
+  const domains = getDomains("domain").filteredLinksArray;
+  const button = document.getElementById(`get${type}`);
+
+  let tempDomains = "", text = "";
+  if (type === "whois"){
+    try {
+      domains.forEach((domain, index) => {
+        const line = `${domain}${index === domains.length-1 ? "" : "\n"}`;
+        tempDomains += (line);
+      });
+
+      text = (`declare -a testStatus=(${tempDomains})
+for i in ` + '"${testStatus[@]}"' + `; do
+  echo -e "$i: $(whois "$i" | grep 'Status:')"
+echo    
+done`);
+
+      await navigator.clipboard.writeText(text);
+      button.innerHTML = "Copied!";
+      setTimeout(() => { button.innerHTML = "Copy bulk Whois"; }, 1000);
+    } catch (e) { console.log(e); }
+  } else if (type === "dig"){
+    try {
+      domains.forEach((domain, index) => {
+        const line = `${domain}${index === domains.length-1 ? "" : "\n"}`;
+        tempDomains += (line);
+      });
+
+      text = (`declare -a testStatus=(${tempDomains})
+for i in ` + '"${testStatus[@]}"' + `; do
+  echo "=== $i ==="
+  dig +trace +nodnssec "$i" | grep "$i" | tail -n 3
+  echo    
+done`);
+
+      await navigator.clipboard.writeText(text);
+      button.innerHTML = "Copied!";
+      setTimeout(() => { button.innerHTML = `Copy bulk <br/> dig`; }, 1000);
+    } catch (e) { console.log(e); }
+  }
+}
+
+/* =========================
+   Exports
+   ========================= */
+
+export function parseDomains(type){
+  let links = {};
+  const filter = document.getElementById("filterInput").value;
+
+  switch(type){
+    case "hostname": links = getDomains(type); break;
+    case "domain":   links = getDomains(type); break;
+    case "url":      links = getLinks();       break;
+  }
+
   if (filter){
     links.filteredLinksArray = links.filteredLinksArray.filter((link) => link.includes(filter));
     links.worklist = createListFromArray(links.filteredLinksArray);
   }
 
-  // If ignore mailers enabled, filter the array for it and update worklist
-  if (document.getElementById("checkboxMail").checked){
-    let tempArray = [];
+  if (document.getElementById("checkboxSkip").checked){
+    const temp = [];
     links.filteredLinksArray.forEach((domain) => {
-      let mailerDetected, el = domain;
-      mailerDomains.forEach(mailer => {
-        if (el.match(`${mailer}`)){
-          mailerDetected = true;
-        }
-      })
-      if(!mailerDetected){tempArray.push(el)}
+      let skipDetected; const el = domain;
+      skipDomains.forEach(skip => { if (el === skip){ skipDetected = true; } });
+      if(!skipDetected){ temp.push(el); }
     });
-
-    links.filteredLinksArray = [...new Set(tempArray)];
+    links.filteredLinksArray = [...new Set(temp)];
     links.worklist = createListFromArray(links.filteredLinksArray);
   }
 
-  // Set values to front-end and update array used by other functions
   document.getElementById("parserOutput").value = links.worklist;
-  document.getElementById("parserOutputCounter").innerText = `Number of links: ${links.filteredLinksArray.length}`;
+  document.getElementById("parserOutputCounter").innerText =
+    `Number of links: ${links.filteredLinksArray.length}`;
   filteredLinksArray = links.filteredLinksArray;
 }
 
-
-// Opens parsed domains, can parse them first if needed
 export function openParsedDomains(){
-  // Check if there are parsed links
-  if (document.getElementById("parserOutput").value) {
-    filteredLinksArray.forEach((el) => {
-      (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
-    })
+  const button = document.getElementById(`openLinks`);
+  if(!filteredLinksArray[0]){
+    button.innerHTML = "No parsed links";
+    setTimeout(() => { button.innerHTML = "Open parsed links"; }, 1000);
   } else {
-    // If no links parsed, parse hostnames and open
-    parseDomains("hostname");
     filteredLinksArray.forEach((el) => {
-      (linkify.match(el)[0]).schema ? window.open(`${el}`) : window.open(`https://${el}`);
-    })
+      //linkify.match(el) ? window.open(el) : window.open(`https://${el}`);
+      el.match(/https?:\/\//gm) ? window.open(el) : window.open(`https://${el}`);
+    });
   }
 }
 
-
-// Searches for targets on Google
 export function findTargets(){
-  // Check if there are parsed links
-  if (document.getElementById("parserOutput").value) {
-    filteredLinksArray.forEach((el) => {
-      window.open(`https://www.google.com/search?q=${el}`);
-    })
-  } else {
-    // If no links parsed, parse hostnames and open
-    parseDomains("domain");
-    filteredLinksArray.forEach((el) => {
-      window.open(`https://www.google.com/search?q=${el}`);
-    })
+  const button = document.getElementById(`openTargets`);
+  if(!filteredLinksArray[0]){
+    button.innerHTML = "No parsed domains";
+    setTimeout(() => { button.innerHTML = "Find possible targets"; }, 1000);
   }
+  filteredLinksArray.forEach((el) => {
+    window.open(`https://www.google.com/search?q=${el}`);
+  });
 }
+
+export function reparse(overwriteOptions, overwriteFilters){
+  parseDomains("domain")
+  handleFetch(overwriteOptions, overwriteFilters).then(r => {
+    document.getElementById("parserInput").value = r
+    parseDomains("domain")
+  });
+}
+
+export { copyCommand, handleFetch, toggleCheckbox };
